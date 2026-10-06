@@ -1,0 +1,21 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+
+# Local discussion history and runtime cache
+/rooms/
+
+# Machine-specific launcher settings
+/.claude/
+
+# Local environment and logs
+.env
+.env.*
+!.env.example
+*.log
+*.pid
+
+# OS metadata
+.DS_Store
+Thumbs.db

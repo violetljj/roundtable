@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>圆桌讨论室</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%23D97757' stroke-width='4'/><circle cx='16' cy='16' r='5' fill='%2310A37F'/></svg>">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="scrim" id="scrim"></div>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <div>
+        <div class="brand-name">圆桌讨论室</div>
+        <div class="brand-sub">Claude × Codex</div>
+      </div>
+    </div>
+    <button class="btn primary block" id="newRoomBtn">＋ 新建讨论</button>
+    <div class="side-label">讨论记录</div>
+    <ul class="room-list" id="roomList"></ul>
+    <div class="accounts" id="accounts">
+      <div class="side-label row">账号与额度 <button class="link" id="refreshStatus" title="重新读取账号和额度">刷新</button></div>
+      <div class="acct claude" id="acctClaude"><div class="acct-head"><span class="dot sm claude">C</span><b>Claude</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
+      <div class="acct codex" id="acctCodex"><div class="acct-head"><span class="dot sm codex">X</span><b>Codex</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <button class="icon-btn menu-btn floating" id="menuBtn2" title="讨论列表" aria-label="打开讨论列表">☰</button>
+    <section class="empty" id="emptyState">
+      <div class="empty-card">
+        <div class="trio">
+          <span class="dot user">你</span><span class="dot claude">C</span><span class="dot codex">X</span>
+        </div>
+        <h1>让 Claude 和 Codex 一起讨论</h1>
+        <p>你提出问题，两边先各自独立思考，再互相质疑、补充，最后整理出共识和分歧。<br>过程中你随时可以插话、点名、打断或叫停。</p>
+        <button class="btn primary" id="emptyNewBtn">开始一场新讨论</button>
+      </div>
+    </section>
+
+    <section class="room hidden" id="roomView">
+      <header class="room-head">
+        <button class="icon-btn menu-btn" id="menuBtn" title="讨论列表" aria-label="打开讨论列表">☰</button>
+        <div class="room-title">
+          <h2 id="roomTopic"></h2>
+          <div class="room-meta">
+            <span class="pill" id="phasePill"></span>
+            <button class="model-chip claude" id="chipClaude" title="点击切换 Claude 的模型和推理强度"></button>
+            <button class="model-chip codex" id="chipCodex" title="点击切换 Codex 的模型和推理强度"></button>
+            <span class="speaking" id="speaking"></span>
+          </div>
+        </div>
+        <div class="controls">
+          <button class="btn" id="pauseBtn" title="当前发言结束后，不再启动下一位">⏸ 暂停</button>
+          <button class="btn" id="resumeBtn" title="继续讨论">▶ 继续</button>
+          <button class="btn warn" id="interruptBtn" title="立即停止当前发言，未完成的内容不会转给对方">✋ 打断</button>
+          <button class="btn" id="addRoundBtn" title="讨论轮数上限 +1">＋1 轮</button>
+          <button class="btn" id="finishBtn" title="停止讨论，让双方整理共识和分歧">📋 总结并结束</button>
+          <button class="btn ghost" id="stopBtn" title="立即停止，不做总结">■ 停止</button>
+          <button class="btn hidden" id="jumpSummaryBtn" title="跳到总结和复核（共识、分歧、更正、下一步）">↧ 看结论</button>
+          <a class="btn ghost" id="exportBtn" title="下载完整记录（Markdown）">⤓ 导出</a>
+        </div>
+      </header>
+      <div class="notice hidden" id="notice"></div>
+
+      <div class="timeline" id="timeline"></div>
+
+      <footer class="composer">
+        <div class="composer-row">
+          <div class="seg" id="targetSeg" role="group" aria-label="发给谁">
+            <button data-target="all" class="on">对所有人</button>
+            <button data-target="claude">@Claude</button>
+            <button data-target="codex">@Codex</button>
+          </div>
+          <label class="urgent" title="打断正在发言的一方，让它马上按你的话调整（Codex 不打断，直接插入）">
+            <input type="checkbox" id="urgentChk"> 立即纠正
+          </label>
+          <span class="hint" id="composerHint">默认排在当前发言之后。Enter 发送，Shift+Enter 换行</span>
+        </div>
+        <div class="composer-box">
+          <textarea id="input" rows="2" aria-label="你的发言" placeholder="随时插话：补充要求、提问、纠正方向……"></textarea>
+          <button class="btn primary send" id="sendBtn">发送</button>
+        </div>
+      </footer>
+    </section>
+  </main>
+</div>
+
+<dialog id="newDialog">
+  <form method="dialog" id="newForm">
+    <h3>新建讨论</h3>
+    <label>讨论主题 <span class="req">*</span>
+      <textarea name="topic" rows="3" required placeholder="例如：登录模块要不要拆成独立服务？"></textarea>
+    </label>
+    <button type="button" class="link" id="fillExample">填入示例话题</button>
+    <label>背景信息（可选）
+      <textarea name="background" rows="3" placeholder="约束、现状、你已经知道的事……"></textarea>
+    </label>
+    <label>项目
+      <select id="projectSelect" aria-label="选择项目"><option value="">加载中…</option></select>
+    </label>
+    <label class="hidden" id="cwdLabel">项目文件夹路径
+      <input name="cwd" id="cwdInput" placeholder="E:\roundtable">
+    </label>
+    <div class="ctx-line" id="ctxLine"></div>
+    <div class="grid2">
+      <label>带入 Claude 的已有对话
+        <select id="forkClaude" aria-label="带入 Claude 的已有对话"><option value="">不带入，新开对话</option></select>
+      </label>
+      <label>带入 Codex 的已有对话
+        <select id="forkCodex" aria-label="带入 Codex 的已有对话"><option value="">不带入，新开对话</option></select>
+      </label>
+    </div>
+    <p class="fine">带入的是对话的一份副本：讨论室里的 Claude / Codex 会记得那次对话的内容，桌面端的原对话不受影响。</p>
+    <div class="grid2">
+      <label>讨论轮数
+        <select name="maxRounds">
+          <option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option>
+        </select>
+      </label>
+      <label>谁先发言
+        <select name="firstSpeaker">
+          <option value="claude">Claude</option>
+          <option value="codex">Codex</option>
+        </select>
+      </label>
+    </div>
+    <div class="model-picker" data-picker="new"></div>
+    <p class="fine">讨论期间两边都是只读的：只能阅读和搜索文件，不能修改，也不能使用其他工具。</p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="cancelNew">取消</button>
+      <button type="submit" class="btn primary" id="createBtn">开始讨论</button>
+    </div>
+    <div class="form-error" id="formError"></div>
+  </form>
+</dialog>
+
+<dialog id="modelsDialog">
+  <form method="dialog" id="modelsForm">
+    <h3>切换模型和推理强度</h3>
+    <p class="fine">从双方的下一次发言开始生效，正在进行的发言不受影响。</p>
+    <div class="model-picker" data-picker="room"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="cancelModels">取消</button>
+      <button type="submit" class="btn primary">应用</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/app.js"></script>
+</body>
+</html>

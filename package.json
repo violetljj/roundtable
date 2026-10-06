@@ -1,0 +1,15 @@
+{
+  "name": "roundtable",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude × Codex 讨论室：本地网页，两边实时讨论，你随时插话",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js --open",
+    "smoke": "node smoke-test.js",
+    "test": "node --test test/room.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
