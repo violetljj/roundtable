@@ -1,7 +1,7 @@
 'use strict';
 import { createRenderQueue } from './render-queue.js';
 import { initWorkspace } from './workspace-ui.js';
-import { initBehaviorCards } from './behavior-cards.js';
+import { initBehaviorCards, loadBehaviorCatalog } from './behavior-cards.js';
 
 const $ = (s) => document.querySelector(s);
 const NAMES = { claude: 'Claude', codex: 'Codex', user: '你', evidence: '实验记录' };
@@ -91,12 +91,13 @@ async function loadRooms() {
       // 侧栏状态点：进行中 / 暂停 / 等你回答 / 结束
       li.dataset.status = r.status === 'waiting' && r.phase !== 'done' ? 'waiting-user' : r.status;
       li.innerHTML = `<span class="t"></span><span class="s"></span>`;
-      li.querySelector('.t').textContent = r.topic;
+      li.querySelector('.t').textContent = r.title || r.topic;
+      if (r.title) li.title = r.topic;
       li.querySelector('.s').textContent = `${new Date(r.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${statusText(r)}`;
       li.onclick = () => { openRoom(r.id); toggleSidebar(false); };
       li.tabIndex = 0;
       li.setAttribute('role', 'button');
-      li.setAttribute('aria-label', `${r.topic}，${statusText(r)}`);
+      li.setAttribute('aria-label', `${r.title || r.topic}，${statusText(r)}`);
       if (current?.id === r.id) li.setAttribute('aria-current', 'page');
       li.onkeydown = (event) => {
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); li.click(); }
@@ -428,9 +429,13 @@ function setState(s) {
   const roomId = current.id;
   claimBoardUI.then((ui) => { if (current?.id === roomId) ui.sync(current); });
   notificationUI.then((ui) => { if (current?.id === roomId) ui.observe(roomId, prev, s); });
-  $('#roomTopic').textContent = s.topic;
-  $('#roomTopic').title = s.topic;
-  document.title = `${s.topic} · 圆桌讨论室`;
+  const shown = s.title || s.topic;
+  $('#roomTopic').textContent = shown;
+  // 改过名时悬停仍能看到原始议题（双方讨论的始终是它）
+  $('#roomTopic').title = s.title ? `原始议题：${s.topic}
+双击重命名` : `${s.topic}
+双击重命名`;
+  document.title = `${shown} · 圆桌讨论室`;
 
   let phase;
   if (s.phase === 'independent') phase = '第 0 轮 · 独立提案';
@@ -874,6 +879,16 @@ async function openNewDialog() {
     renderPicker(picker);
   }
   loadProjects();
+  // 行为卡沿用上次的设置：勾选状态和将带上的卡片名都按最近一次修改显示
+  loadBehaviorCatalog(api).then((catalog) => {
+    const defaults = catalog?.defaults;
+    if (!defaults) return;
+    $('#newForm').behaviorEnabled.checked = defaults.enabled;
+    const cards = defaults.cards.filter((card) => card.enabled);
+    $('#newBehaviorNote').textContent = cards.length
+      ? `沿用上次的 ${cards.length} 张：${cards.map((card) => `${card.title}（${card.subject === 'codex' ? 'Codex' : 'Claude'}）`).join('、')}。开场后可在本场设置里增删改。`
+      : '上次的卡片都已停用，开场后可在本场设置里添加。';
+  });
 }
 
 // ---------- 项目与已有对话 ----------
@@ -989,7 +1004,7 @@ $('#newForm').addEventListener('submit', async (e) => {
     mode: f.mode.value,
     maxTurns: f.maxTurns.value,
     claimCards: f.claimCards.checked,
-    behaviorCards: { enabled: f.behaviorEnabled.checked, scene: f.behaviorScene.value },
+    behaviorCards: { enabled: f.behaviorEnabled.checked },
     models: readPicker(document.querySelector('[data-picker="new"]')),
   };
   $('#createBtn').disabled = true;
@@ -1027,6 +1042,64 @@ $('#pauseBtn').onclick = () => action('pause');
 $('#resumeBtn').onclick = () => action('resume');
 $('#interruptBtn').onclick = () => action('interrupt');
 $('#addRoundBtn').onclick = () => action('add-round');
+
+// 重命名只改显示名：标题原位变成输入框，Enter 或失焦保存，Esc 取消，清空则恢复原始议题
+function startRename() {
+  if (!current) return;
+  const input = $('#roomTitleInput');
+  input.value = current.state.title || current.state.topic;
+  $('#roomTopic').classList.add('hidden');
+  input.classList.remove('hidden');
+  input.focus();
+  input.select();
+}
+async function finishRename(save) {
+  const input = $('#roomTitleInput');
+  if (input.classList.contains('hidden')) return;
+  input.classList.add('hidden');
+  $('#roomTopic').classList.remove('hidden');
+  const title = input.value.trim();
+  if (!save || !current || title === (current.state.title || current.state.topic)) return;
+  try {
+    await api(`/api/rooms/${current.id}/rename`, { title: title === current.state.topic ? '' : title });
+    loadRooms();
+  } catch (e) { alert(e.message); }
+}
+$('#renameBtn').onclick = startRename;
+$('#roomTopic').addEventListener('dblclick', startRename);
+$('#roomTitleInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); finishRename(true); }
+  if (e.key === 'Escape') { e.stopPropagation(); finishRename(false); }
+});
+$('#roomTitleInput').addEventListener('blur', () => finishRename(true));
+
+// 「引导下一轮」：只预填文字，发不发、怎么改由用户决定；写明只管下一轮，不变成长期偏好
+const NUDGES = {
+  explore: '【只针对下一轮】先别急着收敛：各自再提一两个和现在不同的方向或机制，可以还没验证，说清它的潜力和要成立需要什么。',
+  converge: '【只针对下一轮】请收敛：给出一个现在就能执行的方案，写清第一步、主要代价，以及怎么判断它成没成。',
+  necessity: '【只针对下一轮】请逐项检查当前方案里的额外设计：它解决的是哪个当前问题？去掉会怎样？说不出当前依据的，删掉或标为可选。',
+};
+function toggleNudge(open) {
+  const on = open ?? $('#nudgeMenu').classList.contains('hidden');
+  $('#nudgeMenu').classList.toggle('hidden', !on);
+  $('#nudgeBtn').setAttribute('aria-expanded', String(on));
+}
+$('#nudgeBtn').onclick = (e) => { e.stopPropagation(); toggleNudge(); };
+$('#nudgeMenu').addEventListener('click', (e) => {
+  const item = e.target.closest('[data-nudge]');
+  if (!item) return;
+  toggleNudge(false);
+  const input = $('#input');
+  const text = NUDGES[item.dataset.nudge];
+  input.value = input.value.trim() ? `${input.value.trim()}
+${text}` : text;
+  autosize();
+  updateHint();
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('.nudge')) toggleNudge(false); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggleNudge(false); });
 $('#reopenBtn').onclick = () => action('reopen');
 $('#resummarizeBtn').onclick = () => action('resummarize');
 $('#finishBtn').onclick = () => action('finish');

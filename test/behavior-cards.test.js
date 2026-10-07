@@ -5,10 +5,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Room } from '../lib/room.js';
-import { defaultBehaviorCards, normalizeBehaviorCards, behaviorCardsFor, behaviorSignature, behaviorPrompt } from '../lib/behavior-cards.js';
+import { defaultBehaviorCards, normalizeBehaviorCards, behaviorCardsFor, behaviorSignature, behaviorPrompt, loadBehaviorDefaults, saveBehaviorDefaults, inheritBehaviorCards, BEHAVIOR_PRESETS } from '../lib/behavior-cards.js';
 
 const models = { codex: { model: 'gpt-6-astra', effort: 'high' }, claude: { model: 'claude-opus-5-5', effort: 'high' } };
-function settings(scene = 'engineering') { return { ...defaultBehaviorCards(models), enabled: true, scene }; }
+function settings() { return { ...defaultBehaviorCards(), enabled: true }; }
 function agent(name) {
   return {
     name, prompts: [], turns: [],
@@ -40,29 +40,61 @@ async function discussion(ctx) {
   await waitFor(() => ctx.claude.turns.length === 2);
 }
 
-test('默认关闭；场景和具体型号精确匹配，不推断未知型号倾向', () => {
-  const data = { models, behaviorCards: defaultBehaviorCards(models) };
+test('默认关闭；开启后按具体型号匹配，Claude 别名按实际型号解析，未知型号不推断', () => {
+  const data = { models, behaviorCards: defaultBehaviorCards() };
   assert.deepEqual(behaviorCardsFor(data), []);
   assert.equal(behaviorPrompt(data, 'codex'), '');
   data.behaviorCards = settings();
-  assert.equal(behaviorCardsFor(data)[0].subject, 'codex');
+  assert.deepEqual(behaviorCardsFor(data).map((card) => card.subject), ['codex', 'claude']);
   data.models = { ...models, codex: { model: 'gpt-6-astra-next' } };
-  assert.deepEqual(behaviorCardsFor(data), []);
+  assert.deepEqual(behaviorCardsFor(data).map((card) => card.subject), ['claude']);
   data.models = { ...models, codex: { model: '' } };
-  assert.deepEqual(behaviorCardsFor(data), []);
-  data.behaviorCards = settings('creative');
-  data.models = { ...models, claude: { model: 'opus' } };
-  assert.deepEqual(behaviorCardsFor(data), []);
-  assert.deepEqual(defaultBehaviorCards({ claude: { model: 'haiku' } }).cards[1].modelIds, ['claude-opus-5-5']);
-  data.models = models;
-  assert.equal(behaviorCardsFor(data)[0].subject, 'claude');
-  data.behaviorCards.scene = 'general';
-  assert.deepEqual(behaviorCardsFor(data), []);
+  assert.deepEqual(behaviorCardsFor(data).map((card) => card.subject), ['claude']);
+  // opus 和命令行默认都解析成 claude-opus-5-5；haiku 不在适用型号里
+  for (const alias of ['opus', '', 'fable']) {
+    data.models = { ...models, claude: { model: alias } };
+    assert.ok(behaviorCardsFor(data).some((card) => card.subject === 'claude'), alias);
+  }
+  data.models = { ...models, claude: { model: 'haiku' } };
+  assert.ok(!behaviorCardsFor(data).some((card) => card.subject === 'claude'));
   const edited = settings();
   edited.cards[0].modelIds = ['custom-model'];
-  data.behaviorCards = normalizeBehaviorCards(edited, models);
+  data.behaviorCards = normalizeBehaviorCards(edited);
   data.models = { ...models, codex: { model: 'custom-model' } };
-  assert.equal(behaviorCardsFor(data).length, 1);
+  assert.ok(behaviorCardsFor(data).some((card) => card.subject === 'codex'));
+  // 没写完触发和动作的空白卡不发给模型
+  data.behaviorCards = normalizeBehaviorCards({ ...data.behaviorCards, cards: [...data.behaviorCards.cards,
+    { id: 'blank', title: '新行为卡', subject: 'codex', modelIds: ['custom-model'], trigger: '', action: '' }] });
+  assert.ok(!behaviorCardsFor(data).some((card) => card.id === 'blank'));
+});
+
+test('最近一次修改的卡片组成为新讨论默认值；明确给出的部分优先', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roundtable-behavior-defaults-'));
+  try {
+    assert.deepEqual(loadBehaviorDefaults(dir), { enabled: false, cards: defaultBehaviorCards().cards });
+    const preset = BEHAVIOR_PRESETS.find((p) => p.id === 'claude-no-easy-agree');
+    saveBehaviorDefaults(dir, { enabled: true, version: 5, cards: [{ ...preset, enabled: true }] });
+    const saved = loadBehaviorDefaults(dir);
+    assert.equal(saved.enabled, true);
+    assert.deepEqual(saved.cards.map((card) => card.id), ['claude-no-easy-agree']);
+    assert.deepEqual(inheritBehaviorCards(undefined, saved), saved);
+    assert.equal(inheritBehaviorCards({ enabled: false }, saved).cards, saved.cards);
+    assert.equal(inheritBehaviorCards({ enabled: false }, saved).enabled, false);
+    // 重复 ID（例如同一预设加了两次）自动区分
+    const ids = normalizeBehaviorCards(inheritBehaviorCards({ cards: [{ ...preset, id: 'x' }, { ...preset, id: 'x' }] }, saved)).cards.map((card) => card.id);
+    assert.equal(new Set(ids).size, 2);
+  } finally { fs.rmSync(dir, { recursive: true }); }
+});
+
+test('重命名只改显示名，不进入模型提示；清空恢复原始议题', (t) => {
+  const { room } = makeRoom(t);
+  room.rename('  行为卡  ');
+  assert.equal(room.summary().title, '行为卡');
+  assert.equal(room.summary().topic, '工程方案');
+  room.rename('');
+  assert.equal(room.summary().title, undefined);
+  room.rename('工程方案');
+  assert.equal(room.d.title, undefined);
 });
 
 test('同一条件动作双边可见，自律和条件性追问分开；无卡时明确撤销', () => {
@@ -70,7 +102,8 @@ test('同一条件动作双边可见，自律和条件性追问分开；无卡�
   const own = behaviorPrompt(data, 'codex'), peer = behaviorPrompt(data, 'claude');
   assert.ok(own.includes(data.behaviorCards.cards[0].action));
   assert.ok(peer.includes(data.behaviorCards.cards[0].action));
-  assert.ok(own.includes('触发时执行')); assert.ok(peer.includes('条件性追问'));
+  assert.ok(own.includes('出现这种情况时照做')); assert.ok(peer.includes('条件性追问'));
+  assert.ok(own.includes('不代表你或对方一定有'));
   assert.ok(peer.includes('用户经验，尚未验证'));
   data.behaviorCardsSeen.codex = behaviorSignature(data);
   assert.equal(behaviorPrompt(data, 'codex'), '');
@@ -137,7 +170,9 @@ test('切换型号不重新绑定卡：下一轮撤销旧卡并清空收敛', as
   room.updateModels({ codex: { model: 'unknown', effort: 'high' } });
   assert.deepEqual(room.d.converge, { claude: false, codex: false });
   claude.turns[1].finish(); await waitFor(() => codex.turns.length === 2);
-  assert.ok(codex.prompts[1].includes('当前无生效行为卡'));
+  assert.ok(codex.prompts[1].includes('之前的行为卡作废'));
+  assert.ok(!codex.prompts[1].includes('保护设计是否必要'));
+  assert.ok(codex.prompts[1].includes('发散之后落到可执行方向'));
   assert.deepEqual(room.d.behaviorCards.cards[0].modelIds, ['gpt-6-astra', 'gpt-6-sol']);
 });
 
@@ -157,7 +192,7 @@ test('首次注入失败后停用：未确认卡也须在重试明确作废', as
   assert.equal(room.d.behaviorCardsSeen.codex, '');
 });
 
-test('编辑动作与切换场景：下一轮使用当前卡，旧发言快照不改写', async (t) => {
+test('编辑动作与停用单卡：下一轮使用当前卡，旧发言快照不改写', async (t) => {
   const ctx = makeRoom(t, { behaviorCards: settings() });
   const { room, claude, codex } = ctx;
   await discussion(ctx);
@@ -167,10 +202,12 @@ test('编辑动作与切换场景：下一轮使用当前卡，旧发言快照�
   claude.turns[1].finish(); await waitFor(() => codex.turns.length === 2);
   assert.ok(codex.prompts[1].includes(edited.cards[0].action));
   assert.ok(!room.d.messages.find((m) => m.from === 'codex' && m.phase === 'independent').behaviorCards.cards[0].action.includes(edited.cards[0].action));
-  room.updateSettings({ behaviorCards: { ...room.d.behaviorCards, scene: 'creative' } });
+  const disabled = JSON.parse(JSON.stringify(room.d.behaviorCards));
+  disabled.cards[0].enabled = false;
+  room.updateSettings({ behaviorCards: disabled });
   codex.turns[1].finish(); await waitFor(() => claude.turns.length === 3);
-  assert.ok(claude.prompts[2].includes('创意探索与可执行方向'));
-  assert.ok(claude.prompts[2].includes('探索阶段保留新机制和未验证方向'));
+  assert.ok(claude.prompts[2].includes('发散之后落到可执行方向'));
+  assert.ok(claude.prompts[2].includes('探索阶段照常发散'));
   assert.ok(!claude.prompts[2].includes(edited.cards[0].action));
   assert.equal(room.d.behaviorCards.version, 2);
 });

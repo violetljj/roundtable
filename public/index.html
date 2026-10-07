@@ -55,12 +55,14 @@
       <header class="room-head">
         <div class="head-row">
           <button class="icon-btn menu-btn" id="menuBtn" title="讨论列表" aria-label="打开讨论列表">☰</button>
-          <h2 class="room-title" id="roomTopic"></h2>
+          <h2 class="room-title" id="roomTopic" title="双击重命名"></h2>
+          <input class="room-title-input hidden" id="roomTitleInput" maxlength="80" aria-label="讨论标题">
           <div class="head-actions">
             <button class="btn ghost" id="roomToolsBtn" aria-haspopup="dialog" title="约束卡、模型、用量、核查与后续工具"><span class="tl">本场</span>设置<span class="tool-update">有进展</span></button>
             <div class="more">
               <button class="btn icon ghost" id="moreBtn" title="更多操作" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">⋯</button>
               <div class="menu hidden" id="moreMenu" role="menu">
+                <button id="renameBtn" role="menuitem" title="改成好认的短标题，只影响显示">重命名</button>
                 <button id="addRoundBtn" role="menuitem" title="讨论轮数上限 +1">再加一轮</button>
                 <a id="exportBtn" role="menuitem" title="下载完整记录（Markdown）">导出完整记录</a>
                 <button id="stopBtn" role="menuitem" class="danger" title="立即停止，不做总结">停止（不总结）</button>
@@ -70,6 +72,7 @@
         </div>
         <div class="sub-row">
           <span id="modePill" class="pill mode"></span>
+          <button id="behaviorPill" class="pill behavior hidden" type="button" title="查看或调整双边行为卡"></button>
           <ol id="workflowSteps" class="workflow" aria-label="讨论进度">
             <li data-step="independent">独立提案</li>
             <li data-step="discussion">交叉讨论</li>
@@ -123,8 +126,16 @@
               <button data-target="codex" aria-pressed="false">@Codex</button>
             </div>
             <label class="urgent" title="打断正在发言的一方，让它马上按你的话调整（Codex 不打断，直接插入）">
-              <input type="checkbox" id="urgentChk"><span>立即纠正</span>
+              <input type="checkbox" id="urgentChk"><span><span class="wide-only">立即</span>纠正</span>
             </label>
+            <div class="nudge">
+              <button type="button" class="nudge-btn" id="nudgeBtn" aria-haspopup="menu" aria-expanded="false" title="预填一句只管下一轮的引导，你可以改完再发">引导<span class="wide-only">下一轮</span></button>
+              <div class="menu hidden nudge-menu" id="nudgeMenu" role="menu">
+                <button role="menuitem" data-nudge="explore">展开探索<span>再提一两个不同的方向</span></button>
+                <button role="menuitem" data-nudge="converge">回到可执行方案<span>收敛成现在能做的一个方案</span></button>
+                <button role="menuitem" data-nudge="necessity">检查必要性<span>逐项问额外设计解决什么问题</span></button>
+              </div>
+            </div>
             <span class="hint" id="composerHint">默认排在当前发言之后。Enter 发送，Shift+Enter 换行</span>
             <button class="btn primary send" id="sendBtn">发送</button>
           </div>
@@ -148,17 +159,12 @@
       </form>
     </section>
     <section class="tool-section" id="behaviorSection">
-      <div class="ts-head"><h4>双边行为卡</h4><button class="link" id="editBehavior">编辑</button></div>
-      <p class="facts-preview" id="behaviorPreview"></p>
-      <form class="inline-edit" id="behaviorForm">
-        <label class="opt-check"><input type="checkbox" id="behaviorEnabled"><span>启用本场行为卡</span></label>
-        <label>本场适用场景<select id="behaviorScene"><option value="general">未指定（场景卡不生效）</option><option value="engineering">工程与可靠性</option><option value="creative">创意与视觉</option></select></label>
-        <p class="fine">双方共用触发条件与动作。只在有争议且会改变方案选择时追问，不要求每轮找错。场景由你选择，混合任务可在阶段变化时修改。</p>
-        <div id="behaviorCardList"></div>
-        <p class="fine">保存、停用或切换场景从双方下一次发言起生效，当前发言沿用原卡；型号变化需精确匹配，不自动迁移。这些是假设，不是模型能力评分。</p>
-        <p class="form-error" id="behaviorError" role="alert"></p>
-        <div class="inline-actions"><button type="button" class="btn sm ghost" id="cancelBehavior">取消</button><button type="submit" class="btn sm primary">保存行为卡</button></div>
-      </form>
+      <div class="ts-head"><h4>双边行为卡 <span class="ver" id="behaviorVer"></span></h4>
+        <label class="switch" title="开关整组行为卡"><input type="checkbox" id="behaviorEnabled" role="switch" aria-label="启用双边行为卡"><span class="switch-track" aria-hidden="true"></span></label></div>
+      <p class="fine" id="behaviorPreview"></p>
+      <div id="behaviorCardList" class="bcards"></div>
+      <div class="bcard-add"><button type="button" class="link" id="behaviorAdd" aria-haspopup="menu" aria-expanded="false">＋ 添加</button><div class="menu hidden" id="behaviorAddMenu" role="menu"></div></div>
+      <p class="form-error" id="behaviorError" role="alert"></p>
     </section>
     <section class="tool-section" id="modelsSection">
       <div class="ts-head"><h4>模型</h4><span class="ts-note">下一次发言生效</span></div>
@@ -230,7 +236,7 @@
     </div>
     <p class="fine">使用原对话的副本，不影响桌面端的原对话。</p>
     </div></details>
-    <details class="setup-section" id="advancedOptions"><summary><span>讨论设置</span><small>模型、轮数与用量</small></summary><div class="setup-body">
+    <details class="setup-section" id="advancedOptions"><summary><span>讨论设置</span><small>模型、轮数、用量与行为卡</small></summary><div class="setup-body">
     <div class="grid3">
       <label>讨论轮数
         <select name="maxRounds">
@@ -253,8 +259,7 @@
       <span>要求标注可核查主张<span class="fine">将关键判断列为主张卡片，方便逐条核查。</span></span>
     </label>
     <div class="model-picker" data-picker="new"></div>
-    <label class="opt-check"><input type="checkbox" name="behaviorEnabled"><span>试用双边行为卡<span class="fine">工程场景检查保护是否必要；创意场景保留发散，落地时形成推荐。用户经验，尚未验证；本场设置中可编辑或停用。</span></span></label>
-    <label>行为卡适用场景<select name="behaviorScene"><option value="general">未指定（场景卡不生效）</option><option value="engineering">工程与可靠性</option><option value="creative">创意与视觉</option></select><span class="fine">初始工程卡仅绑定 gpt-6-astra / gpt-6-sol，创意卡仅绑定 claude-opus-5-5；其他型号需手动编辑。</span></label>
+    <label class="opt-check"><input type="checkbox" name="behaviorEnabled"><span>启用双边行为卡<span class="fine" id="newBehaviorNote">提醒双方扬长避短，沿用你上次的卡片；开场后可在本场设置里增删改。</span></span></label>
     </div></details>
     <div class="dialog-actions">
       <span class="fine">讨论期间只读项目文件</span>

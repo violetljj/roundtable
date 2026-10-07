@@ -590,12 +590,61 @@ dialog.drawer::backdrop { background: rgba(20, 18, 15, .22); backdrop-filter: no
 
 .scrim { display: none; }
 
-.behavior-card { min-width: 0; margin: 16px 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
-.behavior-card legend { font-weight: 600; padding: 0 4px; }
-.behavior-card label { margin-top: 10px; }
-.behavior-card input:not([type="checkbox"]), .behavior-card textarea, #behaviorScene { width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: 10px; padding: 9px 12px; background: var(--panel); color: var(--text); font-size: 14px; resize: vertical; }
-#behaviorForm label.opt-check { display: flex; align-items: flex-start; gap: 8px; }
-#behaviorForm label.opt-check input { flex: none; margin-top: 3px; }
+/* 双边行为卡：每张卡一行，勾选即生效；调整时就地展开 */
+.switch { position: relative; display: inline-flex; cursor: pointer; flex: none; align-self: center; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.switch-track { width: 34px; height: 20px; border-radius: 99px; background: var(--line-strong); position: relative; transition: background .15s; }
+.switch-track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--panel); box-shadow: var(--shadow-sm); transition: transform .15s; }
+.switch input:checked + .switch-track { background: var(--text); }
+.switch input:checked + .switch-track::after { transform: translateX(14px); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--text); outline-offset: 2px; }
+.switch input:disabled + .switch-track { opacity: .5; }
+#behaviorPreview { margin-bottom: 10px; }
+.bcards { display: grid; gap: 6px; }
+#behaviorSection.off .bcard:not(.editing) { opacity: .62; }
+.bcard { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 8px 12px; }
+.bcard-head { display: flex; align-items: center; gap: 10px; }
+.bcard-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
+.bcard-toggle input { flex: none; margin: 0; accent-color: var(--text); }
+.bcard-toggle > span:first-of-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bcard[data-state="off"] .bcard-toggle > span:first-of-type { color: var(--muted); }
+.bcard-who { flex: none; font-size: 11.5px; padding: 0 7px; border-radius: 99px; border: 1px solid; }
+.bcard-who.claude { color: var(--claude); border-color: var(--claude-line); background: var(--claude-soft); }
+.bcard-who.codex { color: var(--codex); border-color: var(--codex-line); background: var(--codex-soft); }
+.bcard-status { margin: 4px 0 0 24px; font-size: 12px; color: var(--warn); }
+.bcard.editing .bcard-head .link { display: none; }
+.bcard-edit { display: grid; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.bcard-edit label { display: grid; gap: 5px; font-size: 12.5px; color: var(--muted); }
+.bcard-edit input, .bcard-edit textarea { width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: 8px; padding: 7px 10px; background: var(--panel); color: var(--text); font: inherit; font-size: 13.5px; resize: vertical; }
+.bcard-subject { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); }
+.bcard-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: -4px; }
+.chip { border: 1px dashed var(--line-strong); background: none; border-radius: 99px; padding: 1px 9px; font-size: 12px; color: var(--muted); cursor: pointer; font-family: var(--mono); }
+.chip:hover { color: var(--text); border-color: var(--muted); }
+.chip.on { border-style: solid; border-color: var(--text); color: var(--text); background: var(--panel-2); }
+.bcard-edit .inline-actions { align-items: center; }
+.spacer { flex: 1; }
+.link.danger { color: var(--warn); font-size: 12.5px; }
+.bcard-add { position: relative; margin-top: 10px; }
+.bcard-add .menu { left: 0; right: auto; width: min(320px, 100%); max-height: 340px; overflow-y: auto; }
+.menu .menu-group { font-size: 11.5px; color: var(--faint); padding: 8px 10px 2px; cursor: default; letter-spacing: .04em; }
+.menu .menu-group:hover { background: none; }
+.bcard-add .menu button b { display: block; font-weight: 600; }
+.bcard-add .menu button span { display: block; font-size: 12px; color: var(--muted); }
+.bcard-add .menu .menu-blank { border-top: 1px solid var(--line); margin-top: 4px; border-radius: 0 0 var(--r-sm) var(--r-sm); color: var(--muted); }
+.pill.behavior { background: none; cursor: pointer; font: inherit; font-size: 12px; align-self: center; }
+.pill.behavior:hover { color: var(--text); border-color: var(--muted); }
+.pill.behavior.warn { color: var(--warn); border-color: var(--warn-line); }
+
+/* 标题原位重命名 */
+.room-title { cursor: default; }
+.room-title-input { flex: 1; min-width: 0; font: 650 19px/1.45 var(--serif); border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 0 8px; background: var(--panel); color: var(--text); }
+
+/* 引导下一轮：菜单向上展开，选项只预填文字 */
+.nudge { position: relative; flex: none; }
+.nudge-btn { border: 1px solid transparent; background: none; border-radius: 99px; padding: 3px 9px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.nudge-btn:hover, .nudge-btn[aria-expanded="true"] { color: var(--text); background: var(--ink-soft); }
+.nudge-menu { top: auto; bottom: calc(100% + 8px); left: 0; right: auto; min-width: 240px; }
+.nudge-menu button span { display: block; font-size: 12px; color: var(--muted); margin-top: 1px; }
 
 /* ========== 窄屏 ========== */
 @media (max-width: 1100px) {
@@ -632,8 +681,11 @@ dialog.drawer::backdrop { background: rgba(20, 18, 15, .22); backdrop-filter: no
   .dock-actions { margin-left: auto; }
   .composer-row { gap: 4px; padding-left: 8px; }
   .seg button { padding: 4px 7px; }
-  .urgent { padding: 3px 5px; }
-  .send { padding: 0 14px; }
+  .urgent { padding: 3px 4px; gap: 4px; }
+  .nudge-btn { padding: 3px 6px; }
+  .wide-only { display: none; }
+  .send { padding: 0 12px; }
+  .sub-row { gap: 10px; }
   .composer-card textarea { font-size: 14.5px; }
   .grid2, .grid3, .steps { grid-template-columns: 1fr; }
   .mode-pick { grid-template-columns: repeat(3, minmax(0, 1fr)); }

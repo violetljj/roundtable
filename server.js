@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { CodexServer } from './lib/codex.js';
 import { findClaudeExe, claudeAccount, claudeEvents, probeClaudeLimits, CLAUDE_MODELS, CLAUDE_EFFORTS, prettyClaudeModel, resolveClaudeAlias, loadResolvedClaudeModels, resolvedClaudeModels } from './lib/claude.js';
 import { Room } from './lib/room.js';
+import { BEHAVIOR_PRESETS, loadBehaviorDefaults, saveBehaviorDefaults, inheritBehaviorCards } from './lib/behavior-cards.js';
 import { listProjects, listClaudeSessions, projectContext } from './lib/desktop.js';
 import { Handoff } from './lib/handoff.js';
 import { createExecutionAgentFactory } from './lib/execution-agents.js';
@@ -188,6 +189,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/models') return send(res, 200, await getModels());
+    if (req.method === 'GET' && url.pathname === '/api/behavior-cards') {
+      // 型号建议用完整 ID：行为卡按完整型号精确匹配
+      const codex = (await getModels()).codex?.models ?? [];
+      const modelChoices = { claude: [...new Set(Object.values(resolvedClaudeModels()))], codex: codex.map((m) => m.id) };
+      return send(res, 200, { defaults: loadBehaviorDefaults(ROOMS_DIR), presets: BEHAVIOR_PRESETS, modelChoices });
+    }
     if (req.method === 'GET' && url.pathname === '/api/projects') {
       if (!projectsCache || Date.now() - projectsCache.at > 60000) projectsCache = { at: Date.now(), list: await listProjects(codexServer) };
       return send(res, 200, projectsCache.list);
@@ -221,6 +228,10 @@ const server = http.createServer(async (req, res) => {
         if (!body.topic?.trim()) return send(res, 400, { error: '请填写讨论主题' });
         if (!claudeExe) return send(res, 500, { error: '找不到 Claude 命令行' });
         if (body.cwd && !fs.existsSync(body.cwd)) return send(res, 400, { error: `找不到文件夹：${body.cwd}` });
+        const requestedBehavior = body.behaviorCards;
+        body.behaviorCards = inheritBehaviorCards(requestedBehavior, loadBehaviorDefaults(ROOMS_DIR));
+        // 新建时明确开关也算一次修改，之后的讨论沿用
+        if (requestedBehavior?.enabled !== undefined) saveBehaviorDefaults(ROOMS_DIR, body.behaviorCards);
         const room = Room.create(body, ctx);
         register(room);
         room.start();
@@ -317,7 +328,12 @@ const server = http.createServer(async (req, res) => {
       case 'resummarize': if (!room.resummarize()) return send(res, 400, { error: '只有讨论已结束、没人在发言时才能更新结论' }); break;
         case 'models': room.updateModels(body); break;
         case 'facts': room.updateFacts(body.text); break;
-        case 'settings': room.updateSettings(body); break;
+        case 'rename': room.rename(body.title); break;
+        case 'settings':
+          room.updateSettings(body);
+          // 本场改过的卡片组成为之后新讨论的默认值
+          if (body.behaviorCards !== undefined) saveBehaviorDefaults(ROOMS_DIR, room.d.behaviorCards);
+          break;
         case 'finalize': if (!room.finalize()) return send(res, 400, { error: '这场讨论现在不能生成定稿（需要已结束、有复核、还没有定稿）' }); break;
         default: return send(res, 404, { error: 'unknown action' });
       }

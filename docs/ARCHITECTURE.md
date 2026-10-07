@@ -20,7 +20,7 @@
 |---|---|
 | `server.js` | HTTP 服务、SSE 推送、API 路由；账号与额度缓存；按额度挑定稿方（`pickFinalizer`）；启动时预热 Codex |
 | `lib/room.js` | 讨论调度器：阶段状态机、消息路由、插话/暂停/打断、约束卡、上限、用量、持久化 |
-| `lib/behavior-cards.js` / `public/behavior-cards.js` | 本场双边行为卡、精确型号与场景匹配、提示更新与就地编辑 |
+| `lib/behavior-cards.js` / `public/behavior-cards.js` | 双边行为卡：预设、默认值继承、精确型号匹配（含 Claude 别名解析）、提示更新与就地增删改 |
 | `lib/discussion-quality.js` / `lib/discussion-api.js` | 讨论质量和双版结论协议、扩展模式、已复核结果提取与实验 API 调度 |
 | `lib/experiment.js` / `public/experiment-panel.js` | 独立小实验生命周期、批准卡、证据回流和面板 |
 | `lib/roundtable-client.js` / `scripts/roundtable.js` | 外部对话创建圆桌、有限等待、取得结果；技能入口在 `skills/roundtable` |
@@ -74,13 +74,19 @@ done：自由问答，只回应用户新消息
 
 `done` 阶段用户发消息走 `#freeTurn`（自由问答），不改结论。`conclusionFromRoom()` 返回 `newSince`：最近一份定稿（没有定稿时为复核）之后、`phase === 'done'` 的完整模型发言数；界面据此提示"尚未纳入结论"，空闲时的提示文案也按它区分。两条路回到正式流程：`reopen(rounds=1)` 从 `done` 回到 `discussion`，把 `maxRounds` 设到当前轮次往后 `rounds` 轮、清空收敛标记，讨论满轮后照常总结→复核（→定稿）；`resummarize()` 直接 `#enterSummary`。两者都只在 `done` 且无人发言时可用，接口 `POST /api/rooms/:id/reopen|resummarize`，小实验运行中同样被拦截。重开期间已有讨论消息在旧总结之后，旧结论按原规则不可交付，直到新的复核完成。
 
+## 显示名与引导下一轮
+
+`Room.rename(title)` 只写 `d.title`（最多 80 字，清空或等于议题时删除），`summary()` 带出供侧栏使用；接口 `POST /api/rooms/:id/rename`。模型提示始终用 `d.topic`，显示名不发给双方。「引导下一轮」是纯前端预填：三条固定文字以【只针对下一轮】开头，由用户编辑后按普通消息发送，不存设置、不进行为卡。
+
 ## 双边行为卡
 
-`d.behaviorCards` 保存本场总开关、用户选择的 `scene`（general 未指定／engineering／creative）、版本和条件动作卡。卡片含稳定 ID、标题、subject、精确 modelIds、工程或创意场景、单卡开关、trigger/action；来源始终为「用户经验，尚未验证」。新旧讨论默认关闭，不读取历史纠正自动形成模型画像。初始 ID 固定为工程卡 gpt-6-astra/gpt-6-sol、创意卡 claude-opus-5-5；别名、未知型号和空默认型号不推断匹配。
+`d.behaviorCards` 保存本场总开关、版本和条件动作卡。卡片含 ID、标题、subject、精确 modelIds、场景标签（engineering／creative／general，只给人辨认，不参与匹配）、单卡开关、trigger/action；来源始终为「用户经验，尚未验证」。旧记录里的 `scene` 字段载入时丢弃。不读取历史纠正自动形成模型画像。
 
-`behaviorCardsFor()` 同时按总开关、单卡开关、场景和目标方当前具体模型 ID 筛选。双方看到同样条件动作，目标方执行，另一方仅在触发、有实质争议且会改变方案选择时追问；不转发对方独立提案，也不改变主笔、连接器或执行权限。当前阶段目标和用户约束优先，探索模式不因行为卡提前收敛。
+`behaviorCardsFor()` 按总开关、单卡开关、trigger/action 非空和目标方当前型号筛选；何时执行由卡片自己的触发条件决定，不再要求每场预选场景（曾有的本场场景选择与触发条件重复，混合任务只能二选一）。型号比较用 `effectiveModelId()`：Claude 别名和命令行默认经 `resolveClaudeAlias()` 换成命令行实际报告的完整 ID，Codex 用原值；未知型号不推断。`snapshot()` 附带 `behaviorActive`（生效卡 ID）和 `behaviorModelIds`，前端不重复实现解析。双方看到同样的卡，目标方出现对应情况时照做，另一方仅在对方确实出现、有实质争议且会改变方案选择时追问；不转发对方独立提案，也不改变主笔、连接器或执行权限。注入文字明确这是"可能倾向的提醒，不代表一定存在"，不要据此给对方下结论或矫枉过正。
 
-复用 `POST /api/rooms/:id/settings` 的 `behaviorCards` 字段保存整套设置，语义变化时版本 +1。`#runTurn` 在调用前冻结本次 active 卡及型号，保存到模型消息的 `behaviorCards`；发言旁的版本标签和悬停提示使用此快照，避免把新设置套到旧发言上。初次启用、内容/场景/生效型号变化时按签名注入更新块，停用或失配发送旧卡作废说明。行为卡不放入不可更新的系统提示，原质量规则仍只发一次。
+**默认值继承**：`<roomsDir>/.behavior-cards.json` 保存最近一次修改的 `{ enabled, cards }`。`POST /api/rooms/:id/settings` 带 `behaviorCards` 时、新建请求明确给出 `behaviorCards.enabled` 时写入；新建时未给出的部分由 `inheritBehaviorCards()` 从中补齐（API/命令行入口不传则沿用开关与卡片）。每场讨论保存自己的副本。`GET /api/behavior-cards` 返回 `{ defaults, presets, modelChoices }`：预设 `BEHAVIOR_PRESETS` 是常见长短处的起点（`kind` 只在界面显示，不发给模型），`modelChoices` 给编辑时点选的完整型号 ID。
+
+复用 `POST /api/rooms/:id/settings` 的 `behaviorCards` 字段保存整套设置，语义变化时版本 +1。`#runTurn` 在调用前冻结本次 active 卡及型号，保存到模型消息的 `behaviorCards`；发言旁的版本标签和悬停提示使用此快照，避免把新设置套到旧发言上。初次启用、内容/生效型号变化时按签名注入更新块，停用或失配发送旧卡作废说明。行为卡不放入不可更新的系统提示，原质量规则仍只发一次。
 
 `behaviorCardsSeen` 只在完整结束后记录签名；注入前持久化 `behaviorCardsDirty`，失败、中断或重启仍待重送，撤销也覆盖已尝试注入的提示。进行中修改不打断当前发言，下次生效；双方未收到当前签名或仍 dirty 时不提前结束交叉讨论，旧卡、旧版本或旧型号下的完成不能恢复已清空的收敛标记。卡片只给提示，模拟流程通过不代表模型真实遵从或质量提升。
 
@@ -251,7 +257,7 @@ done：自由问答，只回应用户新消息
 按 `AGENTS.md` / `CLAUDE.md` 的「适度验证与实现」选择最小相关检查；以下为可用测试入口，不是每次都要执行的清单。纯文档只核对内容与差异，全量测试仅在影响范围或实际失败需要时运行。
 
 - `node --test test/room.test.js`：模拟测试，覆盖独立阶段失败/打断、初始化期间停止、对话被占用、提前收敛条件、定稿、约束卡版本、发言上限、探索模式、送达状态。
-- `node --test test/behavior-cards.test.js`：行为卡场景与精确型号、默认关闭和旧记录、双边提示及独立隔离、编辑/停用/换场景/换型号、失败中断撤销、发言中更新与恢复；不调用真实模型。
+- `node --test test/behavior-cards.test.js`：行为卡精确型号与 Claude 别名解析、空白卡不发送、默认值保存与继承、重命名、默认关闭和旧记录、双边提示及独立隔离、编辑/停用单卡/换型号、失败中断撤销、发言中更新与恢复；不调用真实模型。
 - `node --test test/claim-board.test.js test/message-links.test.js`：核查请求与完整回复关联、整条发言用户标记、定向实验回传来源，以及前端关联与明确实验字段预填。不调用真实模型。
 - 当前 24 项讨论模拟测试直接覆盖 Claude urgent 两阶段重来、Codex steer 成功/失败/迟到及重送、finish 两阶段与旧回执竞争、双方约束卡更新/清空。
 - `node --test test/handoff.test.js`：临时真实 Git 仓库配模拟执行器，覆盖全生命周期、源目录保护、漂移、取消/超时/重启、明确提交确认、忽略文件碰撞、hooks 禁用和清理。
