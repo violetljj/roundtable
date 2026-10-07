@@ -1,6 +1,7 @@
 @echo off
 chcp 65001 >nul
-title 圆桌讨论室（关闭此窗口即停止）
+rem Keep this file ASCII-only; server.js sets the Chinese window title
+title Roundtable
 cd /d "%~dp0"
 call node server.js --open
 if errorlevel 1 pause

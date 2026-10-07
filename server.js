@@ -20,6 +20,20 @@ const ROOMS_DIR = process.env.ROUNDTABLE_ROOMS_DIR ? path.resolve(process.env.RO
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const BASE_PORT = parseInt(process.env.ROUNDTABLE_PORT ?? '4545', 10);
 
+// 已经有讨论室在运行就直接打开它：两份服务会同时写同一批讨论记录，
+// 后启动的一份还会把前一份的 Codex 后台当作残留进程清理掉
+const running = await fetch(`http://127.0.0.1:${BASE_PORT}/api/health`, { signal: AbortSignal.timeout(1500) })
+  .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+if (running && 'claudeExe' in running && 'codex' in running) {
+  const url = `http://127.0.0.1:${BASE_PORT}`;
+  console.log(`讨论室已经在运行：${url}，不再重复启动。`);
+  if (process.argv.includes('--open')) await new Promise((resolve) => exec(`start "" "${url}"`, resolve));
+  process.exit(0);
+} else {
+  // 窗口标题在这里设：.cmd 里写中文标题会因为代码页切换被读成乱码命令
+  process.title = '圆桌讨论室（关闭此窗口即停止）';
+}
+
 fs.mkdirSync(ROOMS_DIR, { recursive: true });
 
 const claudeExe = findClaudeExe();
