@@ -8,7 +8,7 @@ const FIELDS = [
 ];
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'returned']);
 
-export function initExperiments({ api, getCurrent }) {
+export function initExperiments({ api, getCurrent, onState }) {
   const css = document.createElement('link');
   css.rel = 'stylesheet';
   css.href = '/experiment-panel.css';
@@ -26,7 +26,10 @@ export function initExperiments({ api, getCurrent }) {
     <div class="xp-body">
       <p class="xp-topic"></p>
       <div class="xp-status" role="status" aria-live="polite"></div>
+      <button type="button" class="link" data-current hidden>返回当前实验卡</button>
       <p class="xp-note">保存实验卡会暂停讨论，等待当前发言结束。你批准后，Codex 在独立工作区、禁网沙盒中运行实验；改动不会合并到原项目。</p>
+      <p class="xp-note">起草和保存不调用模型；点击「批准这张实验卡并开始」才开始消耗模型额度。回传后双方重新讨论也会消耗额度。时限是最长运行时间，不是额度上限。</p>
+      <details data-source hidden><summary>原发言摘录</summary><pre data-excerpt></pre></details>
       <p class="xp-error" role="alert" hidden></p>
       <form class="xp-form">
         <div class="xp-fields"></div>
@@ -67,12 +70,18 @@ export function initExperiments({ api, getCurrent }) {
   let creating = false;
   let generation = 0;
   let version = 0;
+  let readPromise = null;
+  let sourceMessageId = '';
+  let sourceExcerpt = '';
+  let viewingRecord = '';
   const unwrap = (value) => value && Object.hasOwn(value, 'experiment') ? value.experiment : value;
   const asText = (value) => typeof value === 'string' ? value : value == null ? '' : JSON.stringify(value, null, 2);
   const setError = (message = '') => { q('.xp-error').textContent = message; q('.xp-error').hidden = !message; };
   function fillCard() {
     for (const [key] of FIELDS) form.elements[key].value = creating ? '' : state?.card?.[key] ?? '';
     form.elements.budgetMinutes.value = creating ? 3 : state?.budgetMinutes ?? 3;
+    sourceMessageId = creating ? '' : state?.sourceMessageId ?? '';
+    sourceExcerpt = creating ? '' : state?.sourceExcerpt ?? '';
     dirty = false;
   }
   function addMeta(meta, label, value) {
@@ -84,14 +93,17 @@ export function initExperiments({ api, getCurrent }) {
   function renderHistory() {
     const history = state?.history ?? [];
     const container = q('.xp-history div');
+    const opened = new Set([...container.children].filter((el) => el.open).map((el) => el.dataset.experimentId));
     container.replaceChildren();
     q('.xp-history').hidden = !history.length;
     for (const record of [...history].reverse()) {
       const details = document.createElement('details');
+      details.dataset.experimentId = record.id;
+      details.open = opened.has(record.id);
       const summary = document.createElement('summary');
       summary.textContent = `${LABELS[record.status] ?? record.status} · ${record.card?.question ?? '实验'}`;
       const pre = document.createElement('pre');
-      pre.textContent = [asText(record.card), record.report, record.error, record.cleanupError, record.baseHead && `起始 HEAD：${record.baseHead}`, record.worktree && `工作区：${record.worktree}${record.worktreeRemoved ? '（已清理）' : '（保留）'}`].filter(Boolean).join('\n\n');
+      pre.textContent = [record.sourceExcerpt && `原发言摘录：\n${record.sourceExcerpt}`, asText(record.card), record.report, record.error, record.cleanupError, record.baseHead && `起始 HEAD：${record.baseHead}`, record.worktree && `工作区：${record.worktree}${record.worktreeRemoved ? '（已清理）' : '（保留）'}`].filter(Boolean).join('\n\n');
       details.append(summary, pre);
       container.appendChild(details);
     }
@@ -103,7 +115,13 @@ export function initExperiments({ api, getCurrent }) {
     button.textContent = state ? `小实验 · ${LABELS[state.status] ?? state.status}` : '小实验';
     button.dataset.status = state?.status ?? '';
     q('.xp-topic').textContent = room?.state?.topic ?? '';
+    const historical = !!viewingRecord && viewingRecord !== state?.id;
+    form.hidden = historical;
+    q('[data-current]').hidden = !historical;
+    q('[data-source]').hidden = historical || !sourceMessageId;
+    q('[data-excerpt]').textContent = sourceExcerpt;
     q('.xp-status').textContent = loading ? '正在读取实验记录…' : creating ? '新实验草稿' : LABELS[state?.status] ?? '先写下分歧和判据';
+    if (historical) q('.xp-status').textContent = '正在查看以前的实验；当前实验卡的操作已收起';
     q('.xp-status').dataset.status = state?.status ?? '';
     const editable = !state || state.status === 'draft' || creating;
     const allowedPhase = ['discussion', 'done'].includes(room?.state?.phase);
@@ -114,11 +132,11 @@ export function initExperiments({ api, getCurrent }) {
     q('[data-edit]').hidden = !editable;
     q('[data-edit] button').disabled = busy || loading || !allowedPhase;
     q('.xp-save-status').textContent = !allowedPhase ? '进入交叉讨论或讨论结束后可申请实验' : dirty ? '尚未保存；保存后才能批准' : '';
-    q('[data-approval]').hidden = !draft;
+    q('[data-approval]').hidden = historical || !draft;
     q('.xp-pause-note').textContent = dirty ? '实验卡有未保存的修改，请先保存。' : !allowedPhase ? '当前阶段暂不能启动实验。' : idle ? '讨论已暂停。请核对上面的步骤、判据和时限，再批准执行。' : '实验卡已保存，等待讨论暂停且当前发言结束后可批准。';
     q('[data-start]').disabled = busy || loading || dirty || !idle || !allowedPhase;
-    q('[data-active]').hidden = state?.status !== 'running';
-    q('.xp-result').hidden = !TERMINAL.has(state?.status);
+    q('[data-active]').hidden = historical || state?.status !== 'running';
+    q('.xp-result').hidden = historical || creating || !TERMINAL.has(state?.status);
     q('[data-return]').hidden = state?.status === 'returned';
     q('[data-new]').hidden = creating;
     const meta = q('.xp-meta');
@@ -132,22 +150,26 @@ export function initExperiments({ api, getCurrent }) {
     q('[data-report]').textContent = asText(state?.report) || state?.error || '没有完成的实验报告。';
     renderHistory();
   }
-  async function refresh() {
-    if (!roomId || loading) return;
+  function refresh() {
+    if (!roomId) return Promise.resolve();
+    if (loading) return readPromise;
     const id = roomId;
     const token = generation;
     const priorVersion = version;
     loading = true;
     render();
-    try {
+    readPromise = (async () => { try {
       const data = await api(`/api/rooms/${encodeURIComponent(id)}/experiment`);
       if (token !== generation || getCurrent()?.id !== id || priorVersion !== version) return;
       state = unwrap(data);
+      onState?.(id, state);
       loaded = true;
       if (!dirty && !creating) fillCard();
       setError(state?.error ?? '');
     } catch (err) { if (token === generation && getCurrent()?.id === id) setError(err.message); }
-    finally { if (token === generation) { loading = false; render(); } }
+    finally { if (token === generation) { loading = false; readPromise = null; render(); } }
+    })();
+    return readPromise;
   }
   function sync(room) {
     if (room?.id !== roomId) {
@@ -155,7 +177,10 @@ export function initExperiments({ api, getCurrent }) {
       generation++;
       version = 0;
       state = null;
+      viewingRecord = '';
+      onState?.(roomId, null);
       loaded = loading = busy = dirty = creating = false;
+      readPromise = null;
       setError();
       fillCard();
       dialog.close();
@@ -168,6 +193,7 @@ export function initExperiments({ api, getCurrent }) {
     version++;
     loaded = true;
     state = unwrap(data);
+    onState?.(id, state);
     if (!creating && (!dirty || state?.status !== 'draft')) fillCard();
     setError(state?.error ?? '');
     render();
@@ -191,14 +217,15 @@ export function initExperiments({ api, getCurrent }) {
     } catch (err) { if (token === generation && getCurrent()?.id === id) setError(err.message); }
     finally { if (token === generation) { busy = false; render(); } }
   }
-  button.onclick = () => { sync(getCurrent()); dialog.showModal(); refresh(); };
+  button.onclick = () => { viewingRecord = ''; sync(getCurrent()); dialog.showModal(); refresh(); };
+  q('[data-current]').onclick = () => { viewingRecord = ''; render(); };
   q('[data-close]').onclick = () => dialog.close();
   form.addEventListener('input', () => { dirty = true; render(); });
   form.onsubmit = (event) => {
     event.preventDefault();
     if (!form.reportValidity()) return;
     const card = Object.fromEntries(FIELDS.map(([key]) => [key, form.elements[key].value.trim()]));
-    action('card', { card, budgetMinutes: Number(form.elements.budgetMinutes.value), ...(creating ? { newExperiment: true } : {}) });
+    action('card', { card, budgetMinutes: Number(form.elements.budgetMinutes.value), ...(sourceMessageId ? { sourceMessageId, sourceExcerpt } : {}), ...(creating ? { newExperiment: true } : {}) });
   };
   q('[data-start]').onclick = () => action('start', { confirmed: true });
   q('[data-cancel]').onclick = () => action('cancel');
@@ -211,5 +238,43 @@ export function initExperiments({ api, getCurrent }) {
     form.elements.question.focus();
   };
   sync(getCurrent());
-  return { sync, update, refresh };
+  async function openDraft(seed) {
+    viewingRecord = '';
+    sync(getCurrent());
+    document.getElementById('roomToolsDialog').close();
+    dialog.showModal();
+    const id = roomId;
+    if (!loaded) await refresh();
+    if (getCurrent()?.id !== id) return;
+    if (!loaded) { setError('实验记录读取失败，请关闭面板后重试。'); return; }
+    if (loading || busy) { setError('实验记录仍在读取或保存，请稍后再起草。'); return; }
+    if (dirty) { setError('已有未保存的实验草稿，请先保存当前草稿，再从另一条发言起草。'); return; }
+    if (state?.status === 'running') { setError('当前实验仍在运行，请先查看或取消。'); return; }
+    creating = !!state && state.status !== 'draft';
+    fillCard();
+    for (const [key] of FIELDS) form.elements[key].value = seed.card?.[key] ?? '';
+    sourceMessageId = seed.sourceMessageId;
+    sourceExcerpt = seed.sourceExcerpt;
+    dirty = true;
+    setError(); render();
+    form.elements.question.focus();
+  }
+  async function openRecord(recordId) {
+    sync(getCurrent());
+    document.getElementById('roomToolsDialog').close();
+    dialog.showModal();
+    const id = roomId;
+    await refresh();
+    if (getCurrent()?.id !== id) return;
+    viewingRecord = recordId === state?.id ? '' : recordId;
+    render();
+    if (!viewingRecord) return;
+    const record = [...q('.xp-history div').children].find((el) => el.dataset.experimentId === recordId);
+    if (record) {
+      q('.xp-history').open = true;
+      record.open = true;
+      record.scrollIntoView({ block: 'center' });
+    }
+  }
+  return { sync, update, refresh, openDraft, openRecord };
 }

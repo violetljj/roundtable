@@ -117,6 +117,70 @@ test('定向核查沿用点名调度，首个消息事件就带关联，引用�
   assert.ok(!agents.codex.prompts[0].includes(CLAIM_PROTOCOL), '已 briefed 的讨论不再每轮附格式协议');
   const disk = JSON.parse(fs.readFileSync(path.join(room.dir, 'state.json'), 'utf8'));
   assert.equal(disk.messages.find((m) => m.id === sent.id).claimId, 'source:1');
+  const reply = room.d.messages.find((m) => m.from === 'codex' && m.status === 'complete');
+  assert.ok(reply.responseToMessageIds.includes(sent.id));
+  assert.deepEqual(disk.messages.find((m) => m.id === reply.id).responseToMessageIds, reply.responseToMessageIds);
+});
+
+test('未完成的核查不记回复关联，重试完成后才关联原请求', async (t) => {
+  const { room, agents } = setup(t);
+  room.d.messages.push(message());
+  room.d.phase = 'done'; room.d.status = 'waiting';
+  agents.codex.send = async () => ({ status: 'failed', error: '模拟失败' });
+  const sent = room.checkClaim({ messageId: 'source' });
+  await waitFor(() => !room.pumping);
+  const failed = room.d.messages.find((m) => m.from === 'codex');
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.responseToMessageIds, undefined);
+  assert.equal(sent.answeredBy?.codex, undefined);
+  agents.codex.send = async () => ({ status: 'completed', text: '重试核查：证据仍不足。' });
+  room.resume();
+  await waitFor(() => !room.pumping);
+  assert.ok(room.d.messages.find((m) => m.from === 'codex' && m.status === 'complete').responseToMessageIds.includes(sent.id));
+});
+
+test('整条发言的证据标记属于用户，保存重载且不改原文', (t) => {
+  const { room } = setup(t);
+  room.d.messages.push(message({ text: '普通发言，不含主张协议。' }));
+  const original = structuredClone(room.d.messages[0]);
+  const events = [];
+  room.on('event', (event) => events.push(event));
+  assert.deepEqual(room.updateClaim({ messageId: 'source', evidence: 'counter', note: '  原文件:12 不支持该判断  ' }), {
+    messageId: 'source', evidence: 'counter', note: '原文件:12 不支持该判断',
+  });
+  assert.deepEqual(room.d.messages[0], original);
+  assert.deepEqual(events.find((e) => e.type === 'state').state.messageAnnotations.source, room.d.messageAnnotations.source);
+  const reloaded = Room.load(room.dir, { agentFactory: room.agentFactory });
+  assert.deepEqual(reloaded.snapshot().messageAnnotations, room.d.messageAnnotations);
+  assert.deepEqual(room.updateClaim({ messageId: 'source', evidence: 'unverified' }), {
+    messageId: 'source', evidence: 'unverified', note: '原文件:12 不支持该判断',
+  });
+  const saved = structuredClone(room.d.messageAnnotations);
+  for (const input of [{ messageId: 'missing' }, { messageId: 'source', evidence: 'agree' }, { messageId: 'source', note: {} }, { messageId: 'source', note: '长'.repeat(4001) }]) {
+    assert.throws(() => room.updateClaim(input));
+  }
+  room.d.messages.push(message({ id: 'failed', status: 'failed' }));
+  assert.throws(() => room.updateClaim({ messageId: 'failed', evidence: 'supported' }), /已完成/);
+  assert.deepEqual(room.d.messageAnnotations, saved);
+});
+
+test('定向实验回传的记录、自动请求和完整答复保持原文关联', async (t) => {
+  const { room, agents } = setup(t);
+  room.d.messages.push(message());
+  room.d.phase = 'done'; room.d.status = 'waiting';
+  room.experiment = { d: { id: 'linked', sourceMessageId: 'source' } };
+  for (const agent of Object.values(agents)) {
+    agent.send = async () => ({ status: 'completed', text: '实验只支持固定样例。\n【状态】可以收敛' });
+  }
+  room.acceptExperiment('固定样例输出', 'linked');
+  await waitFor(() => !room.pumping);
+  const evidence = room.d.messages.find((m) => m.from === 'evidence');
+  const request = room.d.messages.find((m) => m.from === 'user' && m.experimentId === 'linked');
+  assert.equal(evidence.relatedMessageId, 'source');
+  assert.equal(request.relatedMessageId, 'source');
+  assert.equal(request.origin, 'experiment-return');
+  const replies = room.d.messages.filter((m) => ['claude', 'codex'].includes(m.from) && m.id !== 'source' && m.responseToMessageIds?.includes(request.id));
+  assert.deepEqual(new Set(replies.map((m) => m.from)), new Set(['claude', 'codex']));
 });
 
 test('整条发言核查无需主张标记，对 Codex 发言指定 Claude 回应', async (t) => {

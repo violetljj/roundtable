@@ -13,9 +13,14 @@ const workspaceUI = initWorkspace({ api, getCurrent: () => current, md });
 
 // 执行交接独立加载，避免给讨论消息渲染增加状态。
 const handoffUI = import('/handoff.js').then(({ initHandoff }) => initHandoff({ api, getCurrent: () => current }));
-const experimentUI = import('/experiment-panel.js').then(({ initExperiments }) => initExperiments({ api, getCurrent: () => current }));
+const experimentUI = import('/experiment-panel.js').then(({ initExperiments }) => initExperiments({ api, getCurrent: () => current,
+  onState: (id, value) => claimBoardUI.then((ui) => ui.updateExperiment(id, value)),
+}));
 const claimBoardUI = Promise.all([import('/claim-board.js'), import('/source-preview.js')]).then(([{ initClaimBoard }, { initSourcePreview }]) => {
-  const ui = initClaimBoard({ api, getCurrent: () => current, openSource: initSourcePreview({ api, getCurrent: () => current }) });
+  const ui = initClaimBoard({ api, getCurrent: () => current, openSource: initSourcePreview({ api, getCurrent: () => current }),
+    draftExperiment: (seed) => experimentUI.then((panel) => panel.openDraft(seed)),
+    viewExperiment: (id) => experimentUI.then((panel) => panel.openRecord(id)),
+  });
   ui.sync(current);
   for (const m of current?.msgs.values() ?? []) {
     const el = document.getElementById('m-' + m.id);
@@ -362,6 +367,7 @@ function handleEvent(ev) {
       upsertMsg(ev.msg, true);
       workspaceUI.sync();
       const roomId = current.id;
+      if (ev.msg.status !== 'streaming') claimBoardUI.then((ui) => { if (current?.id === roomId) ui.sync(current); });
       notificationUI.then((ui) => { if (current?.id === roomId) ui.observeMessage(roomId, ev.msg); });
       break;
     }

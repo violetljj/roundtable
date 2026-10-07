@@ -80,6 +80,40 @@ async function run(experiment, extra = {}) {
   return experiment.snapshot();
 }
 
+test('定向实验草稿引用原发言，冻结与历史保留关联，新卡不继承来源', async (t) => {
+  const { experiment, room, agentFactory } = fixture(t);
+  room.d.messages.push({ id: 'source', from: 'claude', status: 'complete', text: '建议固定输入检查排序是否稳定。' });
+  await experiment.saveCard({ card, sourceMessageId: 'source', sourceExcerpt: '固定输入检查排序' });
+  const restored = new Experiment(room, { agentFactory });
+  assert.equal(restored.d.sourceMessageId, 'source');
+  assert.equal(restored.d.sourceExcerpt, '固定输入检查排序');
+  const result = await run(experiment);
+  assert.equal(result.source.sourceMessageId, 'source');
+  assert.equal(result.source.sourceExcerpt, '固定输入检查排序');
+  await experiment.returnResult({ confirmed: true });
+  await experiment.saveCard({ newExperiment: true, card });
+  assert.equal(experiment.d.sourceMessageId, undefined);
+  assert.equal(experiment.d.history[0].sourceMessageId, 'source');
+});
+
+test('实验来源拒绝非完整模型发言和伪造引用，失败不污染已存草稿', async (t) => {
+  const { experiment, room } = fixture(t);
+  room.d.messages.push(
+    { id: 'source', from: 'codex', status: 'complete', text: '有效原文' },
+    { id: 'failed', from: 'claude', status: 'failed', text: '失败原文' },
+    { id: 'user', from: 'user', status: 'complete', text: '用户原文' },
+  );
+  await experiment.saveCard({ card, sourceMessageId: 'source', sourceExcerpt: '有效' });
+  const saved = experiment.snapshot();
+  for (const body of [
+    { sourceMessageId: 'missing' }, { sourceMessageId: 'failed' }, { sourceMessageId: 'user' }, { sourceMessageId: null },
+    { sourceExcerpt: '并未说过' }, { sourceExcerpt: {} }, { sourceExcerpt: null }, { sourceExcerpt: '长'.repeat(12001) },
+  ]) await assert.rejects(experiment.saveCard(body), /来源|引用/);
+  assert.deepEqual(experiment.snapshot(), saved);
+  room.d.phase = 'independent';
+  await assert.rejects(experiment.saveCard({ card, sourceMessageId: 'source' }), /交叉讨论/);
+});
+
 test('实验必须明确批准，暂停且无人发言后才运行', async (t) => {
   const { experiment, room, calls } = fixture(t);
   await assert.rejects(experiment.start({ card }), /批准/);

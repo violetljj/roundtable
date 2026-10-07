@@ -166,6 +166,8 @@ done：自由问答，只回应用户新消息
 
 `public/claim-board.js` 独立管理清单、草稿和详情；异步响应绑定讨论 ID。`lib/source-reference.js` 为项目内非链接 UTF-8 文本提供最多 1 MiB 文件的局部当前内容预览，返回 SHA-256、读取时间和修改时间；这不是历史快照或真实工具读取审计。`public/source-preview.js` 显式提示当前版本与原引用可能不同。
 
+完整模型回复保存 `responseToMessageIds`，仅取实际完成答复的请求批次（包括成功 steer 带入的消息），失败/中断不写。`public/message-links.js` 用请求的 `relatedMessageId` 与回复批次建立双向导航，定向核查仅列指定接收方的完整回复，不把原作者后来看到请求当成对方核查，也不按时间邻近推断旧记录。完整发言旁常驻核查与起草按钮；原发言显示核查/实验状态，详情保留请求、回复、历史实验与重新判断的入口。`POST /claims` 在无 `id`、有 `messageId` 时保存整条发言的 `evidence/note` 到 `d.messageAnnotations`；界面将其标为用户判断，独立于模型共识，不自动认证事实。
+
 `public/notifications.js` 仅观察当前打开讨论的 SSE 状态/消息；用户点击才请求浏览器通知权限。首次/重连快照静默，实时等待用户、完成、失败、发言上限发通知；手动暂停/停止不发。通知点击聚焦并打开对应讨论，localStorage 有界记录事件尽力跨标签去重，不是后台推送服务。
 
 开发认领工具为 `lib/file-claims.js` 和 `scripts/claims.js`，Git common dir 下 `roundtable-claims` 跨 worktree 共享，原子写锁串行事务；到期不抢占。详见 [FILE_CLAIMS.md](FILE_CLAIMS.md)。
@@ -175,6 +177,8 @@ done：自由问答，只回应用户新消息
 `Experiment` 与讨论、执行交接状态分离，保存在 `experiment.json` 与 `experiments/<id>.json`。状态 `draft → running → completed/failed/cancelled → returned`；历史卡和报告保留。保存卡后暂停讨论，等待已有发言结束；即使当前是最后一轮，也保留交叉阶段用于批准实验。start 必须 `confirmed:true`、暂停且无人发言，不能与同房间执行交接同时运行。
 
 冻结 question/decisionRule/procedure、1–30 分钟预算、事实卡、来源消息 ID、Codex 模型和干净 Git HEAD。建立 detached worktree，通过 `createExecutionAgentFactory` 创建独立 Codex 单工作区写入沙盒、禁网；不向只读讨论会话增加权限，不由宿主直接执行模型提出的命令。临时副本允许产物，不提交或合并。Claude 当前工具集不能执行命令，因此仅能提出实验。
+
+定向起草还保存可选的顶层 `sourceMessageId/sourceExcerpt`，前者须是本场完整模型发言，后者须是原始文本子串且不超过 12000 字符；启动时同时写入冻结 `source`，历史记录保留。浏览器选文带入可编辑的问题字段，原文摘录保留原始文本；选文不能直接匹配 Markdown 原始文本时，摘录采用原文前 12000 字符。仅明确命名的实验问题、判据、步骤会直接预填，普通建议不额外调用模型推断。起草在前端进行，不保存、不暂停、不执行；保存与批准仍走原协议。回传证据和自动请求继承定向来源，完整重新判断按答复批次回挂原文。历史实验只读查看时隐藏当前实验表单和执行按钮；读取复用在途 Promise，状态更新不覆盖未保存草稿。
 
 会话完整返回报告仅标 completed，不声称判据通过。取消、超时、失败保留现场；重启标 failed，不自动重跑。执行器释放不等待无时限的 interrupt 回执；新卡需等整个运行和清理结束。成功且工作区干净时验证归属后移除，产物、链接或失败保留。强杀宿主的进程回收边界与执行交接相同。
 
@@ -235,6 +239,7 @@ done：自由问答，只回应用户新消息
 按 `AGENTS.md` / `CLAUDE.md` 的「适度验证与实现」选择最小相关检查；以下为可用测试入口，不是每次都要执行的清单。纯文档只核对内容与差异，全量测试仅在影响范围或实际失败需要时运行。
 
 - `node --test test/room.test.js`：模拟测试，覆盖独立阶段失败/打断、初始化期间停止、对话被占用、提前收敛条件、定稿、约束卡版本、发言上限、探索模式、送达状态。
+- `node --test test/claim-board.test.js test/message-links.test.js`：核查请求与完整回复关联、整条发言用户标记、定向实验回传来源，以及前端关联与明确实验字段预填。不调用真实模型。
 - 当前 24 项讨论模拟测试直接覆盖 Claude urgent 两阶段重来、Codex steer 成功/失败/迟到及重送、finish 两阶段与旧回执竞争、双方约束卡更新/清空。
 - `node --test test/handoff.test.js`：临时真实 Git 仓库配模拟执行器，覆盖全生命周期、源目录保护、漂移、取消/超时/重启、明确提交确认、忽略文件碰撞、hooks 禁用和清理。
 - `node --test test/execution-agents.test.js`：只读默认、写入沙盒参数、受限文本落盘与路径/链接拒绝、取消和自有进程释放。

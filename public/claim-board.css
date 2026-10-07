@@ -32,7 +32,13 @@
 .claim-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .claim-feedback { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; min-height: 1.6em; margin-bottom: 0; }
 .claim-message-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
-.claim-message-actions .btn { font-size: 12.5px; height: 28px; }
+.timeline .claim-message-actions .btn { font-size: 12.5px; min-height: 32px; padding: 4px 10px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); color: var(--text); background: var(--panel); opacity: 1; }
+.timeline .claim-message-actions .btn:hover { background: var(--panel-2); text-decoration: none; }
+.timeline .claim-message-actions .btn:disabled { opacity: .5; }
+.check-result-link { display: block; text-align: left; margin: 8px 0; max-width: 100%; overflow-wrap: anywhere; }
+.claim-message-actions [data-result] { font-size: 12.5px; max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.claim-message-actions [hidden] { display: none; }
+.claim-message-actions .btn:focus-visible, .claim-message-actions .link:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
 .claim-message-actions .claim-hint { flex: 1 1 130px; margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 600px) {
   .claim-dialog { padding: 18px; }
