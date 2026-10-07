@@ -76,7 +76,9 @@ done：自由问答，只回应用户新消息
 【阶段】……  + 新消息 + 该模式的要求
 ```
 
-规则文本在 `rules()`，模式定义在 `MODES`（`decide` / `brainstorm` / `review` / `paper` / `learn`）。论文模式先双独立审稿，再核对批评和作者回应；讲课模式由 `firstSpeaker` 讲解，另一方追问。交叉阶段每次附关键反驳定位原话、检查薄弱假设和下一轮可能改变判断的问题；这是提示协议，不是质量保证或额外强制回合。
+规则文本在 `rules()`，模式定义在 `MODES`（`decide` / `brainstorm` / `review` / `paper` / `learn`）。论文模式先双独立审稿，再核对批评和作者回应；讲课模式由 `firstSpeaker` 讲解，另一方追问。
+
+**规则只发一次**：讨论质量规则（`QUALITY_RULES`：反驳先定位原话、检查最脆弱假设、事实分歧转查证）和可选的主张格式都写在 `rules()` 里，随开场说明发一次，同时作为系统提示保留（Claude 每次 `--append-system-prompt`，Codex 线程的 `developerInstructions`），不再附在每轮消息末尾。每轮只带阶段说明、新消息和约束卡。主张格式（`CLAIM_PROTOCOL`）只在 `d.claimCards` 为真时写进规则，新建时默认关闭；旧讨论没有该字段，视为关闭，已有发言里的【主张】仍会被提取。这些是提示协议，不是质量保证。
 
 总结固定 `## 三句话版` 和 `## 完整版`，各模式总结项目置于完整版三级标题下。复核和更正同时覆盖两版。`conclusionFromRoom()` 只返回 done 阶段最新完整总结/复核对应的结果；有更正时等完整定稿。新总结、失败复核、未处理实验和重新讨论会使旧定稿失效。旧总结无双版标题时短版为空，不臆造摘要。
 
@@ -139,7 +141,7 @@ done：自由问答，只回应用户新消息
 
 ## 主张与核查
 
-`lib/claim-board.js` 从完整 Claude/Codex 发言的 `forward`（缺失则 `text`）按行提取 `【主张】`、`【来源】`、`【验证】`，忽略代码围栏、引用及失败/中断/流式消息。卡片 ID 为消息 ID 加主张序号；`snapshot().claims` 随原状态事件传送，旧记录也能派生，不额外调用模型。普通发言每轮附输出协议，总结/复核/定稿保持既有格式。
+`lib/claim-board.js` 从完整 Claude/Codex 发言的 `forward`（缺失则 `text`）按行提取 `【主张】`、`【来源】`、`【验证】`，忽略代码围栏、引用及失败/中断/流式消息。卡片 ID 为消息 ID 加主张序号；`snapshot().claims` 随原状态事件传送，旧记录也能派生，不额外调用模型。输出协议只在新建时勾选「要求标注可核查主张」（`claimCards`）后写进讨论室规则，总结/复核/定稿不用写；关闭时整条发言仍可点名核查。
 
 用户标注存于 `d.claimAnnotations`：`discussion`（unresolved/consensus/disputed）、`evidence`（unverified/supported/counter）、`note`。标注不修改原始发言，也不自动升级证据或同步成模型观点。`checkClaim` 通过既有 `userMessage` 点名另一方，创建时持久化 `relatedMessageId`/`claimId`，引用明确为同伴材料而非用户指令。独立阶段拒绝核查，其他阶段继续沿用计轮、上限和总结调度。
 

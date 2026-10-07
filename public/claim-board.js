@@ -138,7 +138,9 @@ export function initClaimBoard({ api, getCurrent, openSource }) {
     count.textContent = `${claims.length} 条 · ${claims.filter((c) => c.discussion === 'disputed').length} 条分歧 · ${claims.filter((c) => c.evidence === 'unverified').length} 条待核实`;
     list.replaceChildren();
     if (!claims.length) {
-      list.appendChild(node('p', 'claim-hint', '发言中的【主张】会汇集到这里。也可在任意完整发言下请另一方核查。'));
+      list.appendChild(node('p', 'claim-hint', current?.state?.claimCards
+        ? '发言中的【主张】会汇集到这里。也可在任意完整发言下请另一方核查。'
+        : '本场没有要求标注主张（新建讨论时可开启）。仍可在任意完整发言下请另一方核查。'));
     }
     for (const claim of claims) {
       const button = node('button', 'claim-row');

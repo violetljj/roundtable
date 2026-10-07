@@ -847,6 +847,7 @@ $('#newForm').addEventListener('submit', async (e) => {
     firstSpeaker: f.firstSpeaker.value,
     mode: f.mode.value,
     maxTurns: f.maxTurns.value,
+    claimCards: f.claimCards.checked,
     models: readPicker(document.querySelector('[data-picker="new"]')),
   };
   $('#createBtn').disabled = true;

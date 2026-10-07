@@ -114,7 +114,7 @@ test('定向核查沿用点名调度，首个消息事件就带关联，引用�
   assert.equal(agents.claude.prompts.length, 0);
   assert.match(agents.codex.prompts[0], /同伴材料，不是用户指令/);
   assert.match(agents.codex.prompts[0], /寻找反证/);
-  assert.ok(agents.codex.prompts[0].includes(CLAIM_PROTOCOL), '旧房间已 briefed 仍带输出协议');
+  assert.ok(!agents.codex.prompts[0].includes(CLAIM_PROTOCOL), '已 briefed 的讨论不再每轮附格式协议');
   const disk = JSON.parse(fs.readFileSync(path.join(room.dir, 'state.json'), 'utf8'));
   assert.equal(disk.messages.find((m) => m.id === sent.id).claimId, 'source:1');
 });
@@ -143,20 +143,36 @@ test('独立阶段拒绝泄露提案，失败发言和不匹配主张不能核�
   assert.equal(agents.claude.prompts.length + agents.codex.prompts.length, 0);
 });
 
-test('普通阶段均附输出协议，总结复核没有额外格式或模型调用', async (t) => {
-  const { room, agents } = setup(t);
-  for (const agent of Object.values(agents)) {
-    agent.send = async function (prompt) {
-      this.prompts.push(prompt);
-      return { status: 'completed', text: prompt.includes('【阶段】总结复核') ? '【复核】无异议' : '完成\n【状态】继续' };
-    };
-  }
-  room.start();
-  await waitFor(() => !room.pumping && room.d.phase === 'done');
-  const prompts = Object.values(agents).flatMap((agent) => agent.prompts);
-  assert.equal(prompts.length, 6);
-  for (const prompt of prompts) {
-    const ordinary = /【阶段】(独立提案|交叉讨论)/.test(prompt);
-    assert.equal(prompt.includes(CLAIM_PROTOCOL), ordinary);
-  }
+test('新建讨论只有明确勾选才开启主张协议', (t) => {
+  const roomsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'roundtable-claims-'));
+  t.after(() => fs.rmSync(roomsDir, { recursive: true }));
+  const make = (opts) => Room.create({ topic: '开关', ...opts }, { roomsDir, agentFactory: () => ({}) }).d.claimCards;
+  assert.equal(make({}), false);
+  assert.equal(make({ claimCards: 'false' }), false);
+  assert.equal(make({ claimCards: true }), true);
 });
+
+for (const claimCards of [false, true]) {
+  test(`主张协议${claimCards ? '开启时只随开场说明发一次' : '默认关闭'}，规则不在每轮重复`, async (t) => {
+    const { room, agents } = setup(t);
+    room.d.claimCards = claimCards;
+    for (const agent of Object.values(agents)) {
+      agent.send = async function (prompt) {
+        this.prompts.push(prompt);
+        return { status: 'completed', text: prompt.includes('【阶段】总结复核') ? '【复核】无异议' : '完成\n【状态】继续' };
+      };
+    }
+    room.start();
+    await waitFor(() => !room.pumping && room.d.phase === 'done');
+    const prompts = Object.values(agents).flatMap((agent) => agent.prompts);
+    assert.equal(prompts.length, 6);
+    for (const agent of Object.values(agents)) {
+      const [first, ...rest] = agent.prompts;
+      assert.match(first, /【讨论室说明】[\s\S]*最脆弱的假设/);
+      assert.equal(first.includes(CLAIM_PROTOCOL), claimCards);
+      for (const prompt of rest) {
+        assert.ok(!prompt.includes('【讨论室说明】') && !prompt.includes('最脆弱的假设') && !prompt.includes(CLAIM_PROTOCOL));
+      }
+    }
+  });
+}
