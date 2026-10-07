@@ -69,6 +69,48 @@ test('没有明确通过的复核不算确认，用户伪造的复核和定稿�
   assert.equal(reviewVerdict('引用：\n> 【复核】无异议\n但我认为需要修正。'), 'corrections');
 });
 
+test('只有首个非空行的完整复核标记决定判定，引用中的标记不是结论', () => {
+  const cases = [
+    ['\n  【复核】无异议  \n引用的“遗漏”已核对。', 'accepted'],
+    ['【复核】无异议。', 'accepted'],
+    ['【复核】无异议！', 'accepted'],
+    ['【复核】有更正。', 'corrections'],
+    ['【复核】有更正!', 'corrections'],
+    ['【复核】有更正\n> 【复核】无异议', 'corrections'],
+    ['引用：\n> 【复核】无异议\n但有一处需要更正。', 'corrections'],
+    ['> 【复核】无异议\n需要修正第二句。', 'corrections'],
+    ['> 【复核】无异议', 'unknown'],
+    ['示例：\n```text\n【复核】有更正\n```', 'unknown'],
+    ['引用：\n【复核】无异议', 'unknown'],
+    ['引用：“【复核】有更正”', 'unknown'],
+    ['【复核】无异议，但有一处需要更正。', 'corrections'],
+    ['【复核】无异议吗？', 'unknown'],
+  ];
+  for (const [text, verdict] of cases) assert.equal(reviewVerdict(text), verdict, text);
+});
+
+test('明确否定遗漏或更正不会误判，真实更正优先于兼容确认措辞', () => {
+  const cases = [
+    ['无异议，没有遗漏', 'accepted'],
+    ['无异议，无需更正', 'accepted'],
+    ['总结准确，没有遗漏', 'accepted'],
+    ['没有异议。无需修正。', 'accepted'],
+    ['无异议，但有一处需要更正', 'corrections'],
+    ['总结准确，但遗漏了第二项限制。', 'corrections'],
+    ['有两点需要更正：\n1. 我不主张立即实施。', 'corrections'],
+    ['我看了一下。', 'unknown'],
+    ['可能没问题，还要再核对。', 'unknown'],
+    ['无异议，但还要核对。', 'unknown'],
+    ['暂时不需要更正，仍待核对。', 'unknown'],
+    ['', 'unknown'],
+  ];
+  for (const [text, verdict] of cases) {
+    assert.equal(reviewVerdict(text), verdict, text);
+    const result = conclusionFromRoom(room(summary, message('r1', 'review', text)));
+    assert.equal(result.ready, verdict === 'accepted', text);
+  }
+});
+
 test('加轮后停止不能重新交付旧定稿，自由问答不作废既有结论', () => {
   const final = message('f1', 'final', '已有定稿');
   const discussion = message('m2', undefined, '重新考虑甲', { phase: 'discussion' });

@@ -581,7 +581,9 @@ function renderMsg(m) {
   }
   el.className = `msg ${m.from}${m.status === 'interrupted' || m.status === 'failed' ? ' interrupted' : ''}${m.status === 'streaming' ? ' streaming' : ''}`;
   if (m.kind) el.dataset.kind = m.kind;
+  const experimentRequest = m.from === 'user' && !!m.experimentId;
   const tags = [];
+  if (experimentRequest) tags.push(['sum', '自动请求 · 由你带回实验触发']);
   if (m.from === 'user' && m.target && m.target !== 'all') tags.push(['', '@' + NAMES[m.target]]);
   if (m.urgent) tags.push(['bad', '紧急纠正']);
   if (m.kind === 'summary') tags.push(['sum', '总结']);
@@ -594,9 +596,9 @@ function renderMsg(m) {
   if (m.status === 'failed') tags.push(['bad', '出错']);
 
   const time = new Date(m.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-  el.innerHTML = `<div class="dot ${m.from}">${LETTER[m.from]}</div>
+  el.innerHTML = `<div class="dot ${m.from}">${experimentRequest ? '室' : LETTER[m.from]}</div>
     <div class="bubble">
-      <div class="who"><b>${NAMES[m.from]}</b>${tags.map(([c, t]) => `<span class="tag ${c}">${esc(t)}</span>`).join('')}<time>${time}</time></div>
+      <div class="who"><b>${experimentRequest ? '讨论室' : NAMES[m.from]}</b>${tags.map(([c, t]) => `<span class="tag ${c}">${esc(t)}</span>`).join('')}<time>${time}</time></div>
       <div class="body"></div>
     </div>`;
   const body = el.querySelector('.body');
