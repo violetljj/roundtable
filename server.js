@@ -11,6 +11,8 @@ import { listProjects, listClaudeSessions, projectContext } from './lib/desktop.
 import { Handoff } from './lib/handoff.js';
 import { createExecutionAgentFactory } from './lib/execution-agents.js';
 import { previewSource } from './lib/source-reference.js';
+import { Experiment } from './lib/experiment.js';
+import { roomResult, experimentAction, assertDiscussionAvailable } from './lib/discussion-api.js';
 import { createStatusCache } from './lib/status-cache.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -131,6 +133,7 @@ const clients = new Map(); // roomId -> Set<res>
 function register(room) {
   rooms.set(room.d.id, room);
   room.handoff = new Handoff(room, { agentFactory: executionAgentFactory });
+  room.experiment = new Experiment(room, { agentFactory: executionAgentFactory });
   room.on('event', (ev) => {
     const data = `data: ${JSON.stringify(ev)}\n\n`;
     for (const res of clients.get(room.d.id) ?? []) res.write(data);
@@ -211,6 +214,27 @@ const server = http.createServer(async (req, res) => {
 
     if (room && req.method === 'GET' && parts.length === 3) return send(res, 200, room.snapshot());
 
+    if (room && req.method === 'GET' && parts.length === 4 && parts[3] === 'result') return send(res, 200, roomResult(room));
+
+    if (room && parts[3] === 'experiment') {
+      if (req.method === 'GET' && parts.length === 4) return send(res, 200, room.experiment.snapshot());
+      if (req.method === 'POST' && parts.length === 5) {
+        if (req.headers.origin && req.headers.origin !== `http://${host}`) return send(res, 403, { error: '只允许从讨论室页面操作小实验' });
+        const body = await readJson(req);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) return send(res, 400, { error: '实验请求必须是对象' });
+        try { return send(res, 200, await experimentAction(room, parts[4], body)); }
+        catch (error) { return send(res, 409, { error: error.message }); }
+      }
+      return send(res, 404, { error: '未知的小实验接口' });
+    }
+
+    if (room && req.method === 'POST') {
+      try {
+        assertDiscussionAvailable(room, parts[3]);
+        if (parts[3] === 'handoff' && parts[4] === 'start' && room.experiment.d?.status === 'running') throw new Error('请等待或取消正在运行的小实验');
+      } catch (error) { return send(res, 409, { error: error.message }); }
+    }
+
     if (room && req.method === 'GET' && parts.length === 4 && parts[3] === 'source') {
       try { return send(res, 200, previewSource(room.d.cwd, url.searchParams.get('reference'))); }
       catch (e) { return send(res, 400, { error: e.message }); }
@@ -268,7 +292,7 @@ const server = http.createServer(async (req, res) => {
         case 'resume': room.resume(); break;
         case 'interrupt': room.interrupt(); break;
         case 'finish': room.finish(); break;
-        case 'stop': room.stop(); break;
+        case 'stop': room.stop(); await room.experiment.dispose(); break;
         case 'add-round': room.addRound(); break;
         case 'models': room.updateModels(body); break;
         case 'facts': room.updateFacts(body.text); break;
@@ -319,6 +343,7 @@ server.listen(port, '127.0.0.1', () => {
 async function shutdown() {
   server.close();
   await Promise.allSettled([...rooms.values()].map((room) => room.handoff.cancel()));
+  await Promise.allSettled([...rooms.values()].map((room) => room.experiment.dispose()));
   codexServer.stop();
   process.exit(0);
 }

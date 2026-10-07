@@ -1,0 +1,41 @@
+#experimentDialog { width: min(780px, calc(100vw - 32px)); max-width: 780px; max-height: calc(100dvh - 32px); padding: 0; overflow: hidden; }
+#experimentDialog[open] { display: flex; flex-direction: column; }
+#experimentDialog [hidden] { display: none !important; }
+.xp-head { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; gap: 18px; padding: 20px 24px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.xp-head h3 { margin: 2px 0 0; font-size: 21px; }
+.xp-head .icon-btn { font-size: 26px; }
+.xp-eyebrow { font-size: 12px; color: var(--muted); }
+.xp-body { padding: 18px 24px 24px; overflow: auto; }
+.xp-topic { margin: 0 0 14px; color: var(--muted); overflow-wrap: anywhere; }
+.xp-status { display: inline-block; font-weight: 600; border-radius: 8px; padding: 6px 12px; color: var(--codex); background: var(--codex-soft); }
+.xp-status[data-status="failed"], .xp-status[data-status="cancelled"] { color: var(--warn); background: var(--warn-soft); }
+.xp-note { font-size: 12px; color: var(--muted); line-height: 1.7; }
+.xp-error { border: 1px solid var(--warn); color: var(--warn); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.xp-fields { display: grid; gap: 14px; margin-top: 18px; }
+#experimentDialog label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; margin: 0; }
+#experimentDialog textarea, #experimentDialog input { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
+#experimentDialog textarea:focus, #experimentDialog input:focus { outline: 2px solid var(--codex); outline-offset: 1px; }
+#experimentDialog textarea { width: 100%; min-height: 80px; line-height: 1.65; resize: vertical; }
+#experimentDialog textarea:disabled { color: var(--muted); opacity: 1; }
+#experimentDialog .xp-budget { margin-top: 16px; width: min(220px, 100%); }
+.xp-budget input { width: 100%; }
+.xp-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.xp-save-status { font-size: 12px; color: var(--muted); }
+.xp-approval { margin-top: 16px; padding: 14px; background: var(--codex-soft); border: 1px solid var(--codex-line); border-radius: 10px; font-size: 13px; }
+.xp-pause-note { margin-top: 0; }
+.xp-result { margin-top: 20px; }
+.xp-meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 14px; font-size: 12px; }
+.xp-meta dt { color: var(--muted); }
+.xp-meta dd { margin: 0; overflow-wrap: anywhere; }
+.xp-result details, .xp-history { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.xp-result summary, .xp-history summary { padding: 10px 14px; background: var(--panel-2); font-size: 13px; font-weight: 600; cursor: pointer; overflow-wrap: anywhere; }
+.xp-result pre, .xp-history pre { max-height: 440px; overflow: auto; padding: 14px; margin: 0; font: 12px/1.7 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.xp-history > div { padding: 8px; }
+@media (max-width: 600px) {
+  #experimentDialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .xp-head { padding: 14px 16px; }
+  .xp-body { padding: 14px 16px 20px; }
+  .xp-actions > .btn { flex: 1 1 auto; }
+  .xp-meta { grid-template-columns: 1fr; gap: 2px; }
+  .xp-meta dd { margin-bottom: 8px; }
+}

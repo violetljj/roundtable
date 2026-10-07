@@ -2,8 +2,8 @@
 import { createRenderQueue } from './render-queue.js';
 
 const $ = (s) => document.querySelector(s);
-const NAMES = { claude: 'Claude', codex: 'Codex', user: '你' };
-const LETTER = { claude: 'C', codex: 'X', user: '你' };
+const NAMES = { claude: 'Claude', codex: 'Codex', user: '你', evidence: '实验记录' };
+const LETTER = { claude: 'C', codex: 'X', user: '你', evidence: '验' };
 
 let current = null; // { id, state, msgs: Map }
 let es = null;
@@ -11,6 +11,7 @@ let target = 'all';
 
 // 执行交接独立加载，避免给讨论消息渲染增加状态。
 const handoffUI = import('/handoff.js').then(({ initHandoff }) => initHandoff({ api, getCurrent: () => current }));
+const experimentUI = import('/experiment-panel.js').then(({ initExperiments }) => initExperiments({ api, getCurrent: () => current }));
 const claimBoardUI = Promise.all([import('/claim-board.js'), import('/source-preview.js')]).then(([{ initClaimBoard }, { initSourcePreview }]) => {
   const ui = initClaimBoard({ api, getCurrent: () => current, openSource: initSourcePreview({ api, getCurrent: () => current }) });
   ui.sync(current);
@@ -293,6 +294,7 @@ function openRoom(id) {
   es?.close();
   renderQueue.clear();
   current = { id, state: null, msgs: new Map() };
+  experimentUI.then((ui) => ui.sync(current));
   handoffUI.then((ui) => ui.sync(current));
   claimBoardUI.then((ui) => ui.sync(current));
   try { localStorage.setItem('roundtable:last', id); } catch {}
@@ -324,6 +326,7 @@ function handleEvent(ev) {
       setState(state);
       // 重连可能错过交接完成事件，重新读取独立状态；保留未保存的任务卡编辑。
       handoffUI.then((ui) => ui.refresh());
+      experimentUI.then((ui) => ui.refresh());
       scrollToBottom(true);
       break;
     }
@@ -355,6 +358,11 @@ function handleEvent(ev) {
       handoffUI.then((ui) => ui.update(roomId, ev.handoff));
       break;
     }
+    case 'experiment': {
+      const roomId = current.id;
+      experimentUI.then((ui) => ui.update(roomId, ev.experiment));
+      break;
+    }
   }
 }
 
@@ -362,6 +370,7 @@ function handleEvent(ev) {
 function setState(s) {
   const prev = current.state;
   current.state = s;
+  experimentUI.then((ui) => ui.sync(current));
   handoffUI.then((ui) => ui.sync(current));
   const roomId = current.id;
   claimBoardUI.then((ui) => { if (current?.id === roomId) ui.sync(current); });
@@ -433,7 +442,7 @@ function updateHint() {
 }
 
 // ---------- 模式、约束卡、本场用量 ----------
-const MODE_NAMES = { decide: '做决定', brainstorm: '探索想法', review: '方案审查' };
+const MODE_NAMES = { decide: '做决定', brainstorm: '探索想法', review: '方案审查', paper: '论文审稿', learn: '双人讲课' };
 
 function fmtDuration(ms) {
   const m = Math.round(ms / 60000);
@@ -578,6 +587,7 @@ function renderMsg(m) {
   if (m.kind === 'summary') tags.push(['sum', '总结']);
   if (m.kind === 'review') tags.push(['sum', '复核']);
   if (m.kind === 'final') tags.push(['sum', '定稿 · 已合并复核更正']);
+  if (m.from === 'evidence') tags.push(['sum', '实验材料 · 待评估']);
   if (m.phase === 'discussion' && m.from !== 'user' && m.round) tags.push(['', `第 ${m.round} 轮`]);
   if (m.model) tags.push(['', m.model]);
   if (m.status === 'interrupted') tags.push(['bad', '被打断 · 未转发给对方']);
@@ -598,6 +608,7 @@ function renderMsg(m) {
   if (['summary', 'review', 'final'].includes(m.kind) && m.status === 'complete') {
     const bubble = el.querySelector('.bubble');
     bubble.insertAdjacentHTML('beforeend', `<button class="btn copy-btn" data-copy="${m.id}" title="有定稿时复制定稿，否则复制总结和复核更正，可以粘贴到 Claude 或 Codex 桌面端继续推进">复制讨论结论</button>`);
+    bubble.insertAdjacentHTML('beforeend', ' <button class="btn copy-btn" data-copy-brief title="复制最新已复核结论的三句话版">复制三句话</button>');
     // 已结束、复核有内容、还没有定稿：可以补一份定稿
     const hasFinal = [...current.msgs.values()].some((x) => x.kind === 'final' && x.status === 'complete');
     if (m.kind === 'review' && !hasFinal && current.state?.phase === 'done') {
@@ -920,6 +931,20 @@ function conclusionText(clickedId) {
 }
 
 $('#timeline').addEventListener('click', async (e) => {
+  const shortButton = e.target.closest('[data-copy-brief]');
+  if (shortButton && current) {
+    const id = current.id;
+    try {
+      const result = await api(`/api/rooms/${encodeURIComponent(id)}/result`);
+      if (current?.id !== id) return;
+      if (!result.ready) throw new Error('结论尚未完成复核或更正');
+      if (!result.brief) throw new Error('这份旧结论没有三句话版');
+      await navigator.clipboard.writeText(result.brief);
+      shortButton.textContent = '✓ 已复制三句话';
+    } catch (error) { shortButton.textContent = error.message; }
+    setTimeout(() => { shortButton.textContent = '复制三句话'; }, 2500);
+    return;
+  }
   if (e.target.closest('[data-finalize]') && current) {
     e.target.closest('[data-finalize]').remove();
     api(`/api/rooms/${current.id}/finalize`, {}).catch((err) => alert(err.message));
@@ -942,6 +967,8 @@ $('#timeline').addEventListener('click', async (e) => {
   const rooms = await loadRooms();
   let last = null;
   try { last = localStorage.getItem('roundtable:last'); } catch {}
+  const requested = new URLSearchParams(location.search).get('room');
+  if (requested && rooms.some((r) => r.id === requested)) last = requested;
   if (last && rooms.some((r) => r.id === last)) openRoom(last);
   setInterval(loadRooms, 15000);
 })();

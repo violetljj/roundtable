@@ -20,6 +20,9 @@
 |---|---|
 | `server.js` | HTTP 服务、SSE 推送、API 路由；账号与额度缓存；按额度挑定稿方（`pickFinalizer`）；启动时预热 Codex |
 | `lib/room.js` | 讨论调度器：阶段状态机、消息路由、插话/暂停/打断、约束卡、上限、用量、持久化 |
+| `lib/discussion-quality.js` / `lib/discussion-api.js` | 讨论质量和双版结论协议、扩展模式、已复核结果提取与实验 API 调度 |
+| `lib/experiment.js` / `public/experiment-panel.js` | 独立小实验生命周期、批准卡、证据回流和面板 |
+| `lib/roundtable-client.js` / `scripts/roundtable.js` | 外部对话创建圆桌、有限等待、取得结果；技能入口在 `skills/roundtable` |
 | `lib/claude.js` | Claude 连接器：找 `claude.exe`、清理环境变量、流式 JSON 解析、会话新建/续接/复制、额度与型号上报 |
 | `lib/codex.js` | Codex 连接器：`CodexServer`（app-server 进程与 JSON-RPC）+ `CodexAgent`（单个对话） |
 | `lib/desktop.js` | 列出项目、Claude 已有对话、项目上下文（CLAUDE.md / AGENTS.md / 记忆数） |
@@ -73,7 +76,9 @@ done：自由问答，只回应用户新消息
 【阶段】……  + 新消息 + 该模式的要求
 ```
 
-规则文本在 `rules()`，模式定义在 `MODES`（`decide` / `brainstorm` / `review`）。
+规则文本在 `rules()`，模式定义在 `MODES`（`decide` / `brainstorm` / `review` / `paper` / `learn`）。论文模式先双独立审稿，再核对批评和作者回应；讲课模式由 `firstSpeaker` 讲解，另一方追问。交叉阶段每次附关键反驳定位原话、检查薄弱假设和下一轮可能改变判断的问题；这是提示协议，不是质量保证或额外强制回合。
+
+总结固定 `## 三句话版` 和 `## 完整版`，各模式总结项目置于完整版三级标题下。复核和更正同时覆盖两版。`conclusionFromRoom()` 只返回 done 阶段最新完整总结/复核对应的结果；有更正时等完整定稿。新总结、失败复核、未处理实验和重新讨论会使旧定稿失效。旧总结无双版标题时短版为空，不臆造摘要。
 
 约束卡为空时不会每次附卡；清空已送达过的旧卡时会附作废说明。
 
@@ -144,6 +149,18 @@ done：自由问答，只回应用户新消息
 
 开发认领工具为 `lib/file-claims.js` 和 `scripts/claims.js`，Git common dir 下 `roundtable-claims` 跨 worktree 共享，原子写锁串行事务；到期不抢占。详见 [FILE_CLAIMS.md](FILE_CLAIMS.md)。
 
+## 小实验与外部入口
+
+`Experiment` 与讨论、执行交接状态分离，保存在 `experiment.json` 与 `experiments/<id>.json`。状态 `draft → running → completed/failed/cancelled → returned`；历史卡和报告保留。保存卡后暂停讨论，等待已有发言结束；即使当前是最后一轮，也保留交叉阶段用于批准实验。start 必须 `confirmed:true`、暂停且无人发言，不能与同房间执行交接同时运行。
+
+冻结 question/decisionRule/procedure、1–30 分钟预算、事实卡、来源消息 ID、Codex 模型和干净 Git HEAD。建立 detached worktree，通过 `createExecutionAgentFactory` 创建独立 Codex 单工作区写入沙盒、禁网；不向只读讨论会话增加权限，不由宿主直接执行模型提出的命令。临时副本允许产物，不提交或合并。Claude 当前工具集不能执行命令，因此仅能提出实验。
+
+会话完整返回报告仅标 completed，不声称判据通过。取消、超时、失败保留现场；重启标 failed，不自动重跑。执行器释放不等待无时限的 interrupt 回执；新卡需等整个运行和清理结束。成功且工作区干净时验证归属后移除，产物、链接或失败保留。强杀宿主的进程回收边界与执行交接相同。
+
+`returnResult(body, acceptEvidence)` 在锁内先同步接收，再标 returned。`Room.acceptExperiment` 以 `from:evidence` 持久化报告，转发时标注非用户指令；随后附固定用户请求让双方重新判断。按 experimentId 去重，证据已存但请求未存的回传可恢复。done 会重新进入 discussion 并生成新总结，原发言上限仍有效。运行中的实验阻止开始新的讨论生成，停止讨论会取消实验。
+
+外部入口复用创建 API，`/result` 返回 ready/text/brief/full/messageId/review/status/phase/notice。CLI 只连接 loopback HTTP、拒绝重定向、不自动重试创建；等待有上限，暂停或需用户输入时交回操作者。客户端退出不停止讨论，不实现跨会话后台消息注入。网页 `?room=<id>` 打开指定房间。
+
 ## HTTP API（`server.js`）
 
 | 方法 | 路径 | 说明 |
@@ -156,6 +173,9 @@ done：自由问答，只回应用户新消息
 | GET | `/api/projects/sessions?path=` | 某项目下两边已有对话 + 会带入的上下文 |
 | GET/POST | `/api/rooms` | 讨论列表 / 新建 |
 | GET | `/api/rooms/:id` | 完整状态 |
+| GET | `/api/rooms/:id/result` | 最新已复核的双版结论；不完整时 ready=false |
+| GET | `/api/rooms/:id/experiment` | 当前实验卡、状态、报告与历史 |
+| POST | `/api/rooms/:id/experiment/<动作>` | `card`、`start`、`cancel`、`return`；启动和回传需明确 confirmed |
 | GET | `/api/rooms/:id/events` | SSE：`snapshot` / `msg` / `delta` / `activity` / `state` |
 | GET | `/api/rooms/:id/transcript` | 下载 Markdown 记录 |
 | GET | `/api/rooms/:id/source?reference=文件:行号` | 当前项目文件只读预览与内容哈希 |
@@ -165,7 +185,7 @@ done：自由问答，只回应用户新消息
 | GET | `/api/rooms/:id/handoff` | 执行交接状态；已完成结论生成可编辑草稿，否则 null |
 | POST | `/api/rooms/:id/handoff/<动作>` | `card`（支持 regenerate）、`start`、`cancel`、`merge`、`discard` |
 
-访问限制：校验 `Host` 是否为本机地址加当前端口；POST 要求 Content-Type 包含 `application/json`。交接、主张标注与定向核查写入接口另校验网页 Origin 与 Host 同源；其他接口仍没有单独校验 Origin。没有身份鉴权，不能把 Host 检查描述成完整的跨站访问防护。
+访问限制：校验 `Host` 是否为本机地址加当前端口；POST 要求 Content-Type 包含 `application/json`。交接、小实验、主张标注与定向核查写入接口另校验网页 Origin 与 Host 同源；其他接口仍没有单独校验 Origin。没有身份鉴权，不能把 Host 检查描述成完整的跨站访问防护。
 
 ## 不能破坏的规则
 
@@ -177,7 +197,7 @@ done：自由问答，只回应用户新消息
 6. 会话按**固定 ID** 恢复，不用"最近一次"，避免多个讨论室串线。
 7. **不结束 Codex 桌面端的进程**。
 8. 启动 Claude 前**清理桌面版注入的环境变量**。
-9. **执行权限不回流到讨论**：交接使用全新会话与独立工作区，合并必须绑定用户看到的已审查提交。
+9. **执行权限不回流到讨论**：交接和小实验使用全新会话与独立工作区；交接合并必须绑定用户看到的已审查提交，小实验不合并。实验报告属于证据，不能升级成用户指令。
 
 ## 踩过的坑
 
@@ -197,6 +217,7 @@ done：自由问答，只回应用户新消息
 - 当前 24 项讨论模拟测试直接覆盖 Claude urgent 两阶段重来、Codex steer 成功/失败/迟到及重送、finish 两阶段与旧回执竞争、双方约束卡更新/清空。
 - `node --test test/handoff.test.js`：临时真实 Git 仓库配模拟执行器，覆盖全生命周期、源目录保护、漂移、取消/超时/重启、明确提交确认、忽略文件碰撞、hooks 禁用和清理。
 - `node --test test/execution-agents.test.js`：只读默认、写入沙盒参数、受限文本落盘与路径/链接拒绝、取消和自有进程释放。
-- `npm test` 运行上述测试及 claim-board、file-claims、source-reference、notifications 四组，不调用真实模型。
+- `node --test test/discussion-quality.test.js test/discussion-api.test.js test/quality-flow.test.js test/experiment.test.js test/roundtable-client.test.js`：双版结论的新旧结果、实验回流/批准/取消/预算/来源保护、客户端 HTTP 与有限等待；不调用真实模型。
+- `npm test` 运行 package.json 列出的全部模拟与本地测试，不调用真实模型。
 - `node smoke-test.js`：真实冒烟，消耗极少额度。Claude/Codex 升级后跑一次能发现行为变化。
 - 界面改动：启动服务后在浏览器里实际点一遍；真实讨论尽量用 Haiku / 低强度省额度。
