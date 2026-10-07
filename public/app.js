@@ -1,4 +1,5 @@
 'use strict';
+import { createRenderQueue } from './render-queue.js';
 
 const $ = (s) => document.querySelector(s);
 const NAMES = { claude: 'Claude', codex: 'Codex', user: '你' };
@@ -152,8 +153,10 @@ function renderStatus(s) {
   // Claude
   const ca = s.claude.account;
   let html = '';
+  if (s.claude.error) html += `<span class="bad">${esc(s.claude.error)}</span>`;
   if (ca && !ca.loggedIn) html += '<span class="bad">命令行未登录</span>';
   else if (ca) html += `<div class="email" title="${esc(ca.email ?? '')}">${esc(ca.email ?? '已登录')}</div>`;
+  html += statusFreshness(s.claude);
   const lim = s.claude.limits;
   if (lim?.unifiedWindows) {
     const w = lim.unifiedWindows;
@@ -173,7 +176,8 @@ function renderStatus(s) {
   html = '';
   if (s.codex.error) html += `<span class="bad">${esc(s.codex.error)}</span>`;
   if (xa) html += `<div class="email" title="${esc(xa.email ?? '')}">${esc(xa.email ?? xa.type ?? '已登录')}</div>`;
-  else if (!s.codex.error) html += '<span class="bad">未登录</span>';
+  else if (!s.codex.error && !s.codex.refreshing) html += '<span class="bad">未登录</span>';
+  html += statusFreshness(s.codex);
   if (rl?.primary) html += meter(windowName(rl.primary.windowDurationMins), rl.primary.usedPercent / 100, rl.primary.resetsAt);
   if (rl?.secondary) html += meter(windowName(rl.secondary.windowDurationMins), rl.secondary.usedPercent / 100, rl.secondary.resetsAt);
   if (rl?.credits && !rl.credits.unlimited && rl.credits.balance != null) html += `<div class="sub">积分余额 ${Number(rl.credits.balance).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</div>`;
@@ -181,9 +185,32 @@ function renderStatus(s) {
   setAcct('codex', xa?.planType ?? rl?.planType, html);
 }
 
-async function loadStatus() {
-  try { renderStatus(await api('/api/status')); } catch {}
+function statusFreshness(account) {
+  if (account.refreshing) return `<div class="sub">${account.updatedAt == null ? '正在读取账号…' : '正在刷新，暂显示上次数据'}</div>`;
+  if (account.updatedAt == null) return '';
+  const time = new Date(account.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return `<div class="sub">账号信息 ${time} 更新${account.error ? '（保留上次数据）' : ''}</div>`;
 }
+
+let statusPending = null;
+let statusTimer = null;
+let statusPollDelay = 1000;
+function loadStatus(force = false) {
+  if (statusPending) return statusPending;
+  clearTimeout(statusTimer);
+  statusPending = api('/api/status' + (force ? '?refresh=1' : '')).then((s) => {
+    renderStatus(s);
+    if (s.claude.refreshing || s.codex.refreshing) {
+      if (!document.hidden) statusTimer = setTimeout(() => loadStatus(), statusPollDelay);
+      statusPollDelay = Math.min(statusPollDelay * 2, 5000);
+    } else statusPollDelay = 1000;
+  }).catch(() => {}).finally(() => { statusPending = null; });
+  return statusPending;
+}
+document.addEventListener('visibilitychange', () => {
+  clearTimeout(statusTimer);
+  if (!document.hidden) loadStatus();
+});
 
 document.getElementById('accounts').addEventListener('click', async (e) => {
   if (e.target.matches('[data-probe]')) {
@@ -193,7 +220,7 @@ document.getElementById('accounts').addEventListener('click', async (e) => {
   }
 });
 // 按钮放在折叠标题里：点它只刷新，不折叠面板
-$('#refreshStatus').onclick = (e) => { e.preventDefault(); e.stopPropagation(); loadStatus(); };
+$('#refreshStatus').onclick = (e) => { e.preventDefault(); e.stopPropagation(); loadStatus(true); };
 try { if (localStorage.getItem('roundtable:accounts') === 'closed') $('#accounts').open = false; } catch {}
 $('#accounts').addEventListener('toggle', () => {
   try { localStorage.setItem('roundtable:accounts', $('#accounts').open ? 'open' : 'closed'); } catch {}
@@ -264,6 +291,7 @@ function modelLabel(who, v) {
 // ---------- 打开讨论室 ----------
 function openRoom(id) {
   es?.close();
+  renderQueue.clear();
   current = { id, state: null, msgs: new Map() };
   handoffUI.then((ui) => ui.sync(current));
   claimBoardUI.then((ui) => ui.sync(current));
@@ -283,6 +311,7 @@ function handleEvent(ev) {
   if (!current) return;
   switch (ev.type) {
     case 'snapshot': {
+      renderQueue.clear();
       const { messages, ...state } = ev.room;
       current.msgs.clear();
       $('#timeline').innerHTML = '';
@@ -475,15 +504,19 @@ function deliveryHtml(m) {
 }
 
 // ---------- 消息 ----------
-const pending = new Set();
-function scheduleRender(m) {
-  pending.add(m);
-  if (pending.size === 1) requestAnimationFrame(() => {
+const renderQueue = createRenderQueue({
+  render(batch) {
     const stick = nearBottom();
-    for (const x of pending) renderMsg(x);
-    pending.clear();
+    for (const message of batch) {
+      // 完成事件可能已替换流式对象，始终渲染当前房间里的最新版本。
+      const latest = current?.msgs.get(message.id);
+      if (latest) renderMsg(latest);
+    }
     if (stick) scrollToBottom();
-  });
+  },
+});
+function scheduleRender(m) {
+  renderQueue.enqueue(m);
 }
 
 function upsertMsg(m, live) {

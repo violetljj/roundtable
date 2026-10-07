@@ -27,6 +27,8 @@
 | `lib/execution-agents.js` | 全新执行/审查会话与自有进程释放；不复用讨论会话 |
 | `public/handoff.js` / `public/handoff.css` | 执行交接面板；由 app.js 动态加载 |
 | `public/` | 前端，纯 HTML/CSS/JS，无构建步骤 |
+| `public/render-queue.js` | 按消息 ID 合帧；切房间和快照重建时取消旧帧 |
+| `lib/status-cache.js` | 账号后台刷新、并发合并、成功缓存和失败退避 |
 | `test/room.test.js` | 模拟测试（`fakeAgent`，不调用模型） |
 | `smoke-test.js` | 真实冒烟测试（两边各：启动、发言、打断、恢复） |
 
@@ -103,6 +105,13 @@ done：自由问答，只回应用户新消息
 - 残留进程：启动时按 `rooms/.codex-app-server.pid` 清理上一次的 app-server，只清理命令行带 `--disable plugins` 的。
 - 其他 API：`model/list`、`account/read`、`account/rateLimits/read`、`thread/list`（用 `cwd` 精确过滤 + `useStateDbOnly: true`，否则很慢）。
 
+## 界面刷新与账号缓存
+
+- `app.js` 以 ES 模块加载。流式增量按消息 ID 合并，每帧只安排一次回调；完成事件替换对象时使用当前消息，切房间和快照重建时取消旧帧。仍会解析当前消息的完整 Markdown，未实现长历史虚拟列表。
+- `/api/status` 不等待命令行或 RPC；每方返回 `refreshing`、`updatedAt`（上次成功查询的毫秒时间或 null）与 `error`。Claude 账号缓存 60 秒、Codex 账号与额度缓存 30 秒，从查询完成时计时。服务启动预热，同一方同时只查询一次；失败保留缓存并退避 15 秒，手动刷新绕过缓存期和退避但复用在途查询。
+- Claude 查询返回的错误对象转成刷新失败；Codex 状态查询直接保留 RPC 错误，避免旧 `account()` 的 null 兜底把故障当成未登录。额度事件仍能即时更新，Claude 额度只由模型发言或用户确认的小请求更新。
+- 网页只在后台查询未完成时按 1、2、4、5 秒间隔补读状态；页面隐藏时停止这段补读，恢复可见时重新读取。原每分钟状态轮询保留。
+
 ## 桌面端数据（`lib/desktop.js`，只读）
 
 - 项目来源：`~/.claude.json` 的 `projects`；`~/.codex/config.toml` 的 `[projects.'…']`（全小写路径）；Codex 对话的 `cwd`。过滤掉临时工作区、`Documents\Codex\` 下的日期文件夹、上级已是项目的子文件夹（Claude 用过的除外）。
@@ -141,7 +150,7 @@ done：自由问答，只回应用户新消息
 |---|---|---|
 | GET | `/api/health` | 两边是否可用 |
 | GET | `/api/models` | 可选模型（Claude 带具体版本） |
-| GET | `/api/status` | 账号与额度 |
+| GET | `/api/status` | 立即返回账号与额度缓存；`?refresh=1` 强制后台刷新 |
 | POST | `/api/status/refresh-claude` | 发一条 Haiku 小请求刷新 Claude 额度 |
 | GET | `/api/projects` | 项目列表（缓存 60 秒） |
 | GET | `/api/projects/sessions?path=` | 某项目下两边已有对话 + 会带入的上下文 |

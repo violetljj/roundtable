@@ -11,6 +11,7 @@ import { listProjects, listClaudeSessions, projectContext } from './lib/desktop.
 import { Handoff } from './lib/handoff.js';
 import { createExecutionAgentFactory } from './lib/execution-agents.js';
 import { previewSource } from './lib/source-reference.js';
+import { createStatusCache } from './lib/status-cache.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ROOMS_DIR = process.env.ROUNDTABLE_ROOMS_DIR ? path.resolve(process.env.ROUNDTABLE_ROOMS_DIR) : path.join(ROOT, 'rooms');
@@ -43,8 +44,8 @@ const executionAgentFactory = createExecutionAgentFactory({ codexServer, claudeE
 // Claude 的额度只能在发言时由命令行顺带报告，所以缓存到磁盘，重启后仍能显示上一次的数据
 const STATUS_FILE = path.join(ROOMS_DIR, '.claude-limits.json');
 const status = {
-  claude: { account: null, accountAt: 0, limits: readJson0(STATUS_FILE), probing: false },
-  codex: { account: null, rateLimits: null, at: 0 },
+  claude: { account: null, limits: readJson0(STATUS_FILE), probing: false },
+  codex: { account: null, rateLimits: null },
 };
 claudeEvents.on('rateLimit', (info) => {
   status.claude.limits = { ...info, at: Date.now() };
@@ -60,23 +61,42 @@ codexServer.on('account', (method, p) => {
   if (method === 'account/rateLimits/updated' && p.rateLimits) status.codex.rateLimits = p.rateLimits;
 });
 
-async function getStatus() {
-  const now = Date.now();
-  const jobs = [];
-  if (claudeExe && now - status.claude.accountAt > 60000) {
-    jobs.push(claudeAccount(claudeExe).then((a) => { status.claude.account = a; status.claude.accountAt = Date.now(); }));
+const claudeStatus = createStatusCache({
+  ttlMs: 60000,
+  load: async () => {
+    const account = await claudeAccount(claudeExe);
+    if (account.error) throw new Error(account.error);
+    return account;
+  },
+  onValue: (account) => { status.claude.account = account; },
+});
+const codexStatus = createStatusCache({
+  ttlMs: 30000,
+  load: async () => {
+    await codexServer.start();
+    // account() 会把 RPC 失败吞成 null；缓存必须区分查询失败和确实未登录。
+    const [account, limits] = await Promise.all([
+      codexServer.request('account/read', { refreshToken: false }),
+      codexServer.request('account/rateLimits/read', {}),
+    ]);
+    return { account: account.account, rateLimits: limits.rateLimits };
+  },
+  onValue: (result) => {
+    status.codex.account = result.account;
+    if (result.rateLimits) status.codex.rateLimits = result.rateLimits;
+  },
+});
+
+function getStatus(force = false) {
+  if (force) {
+    if (claudeExe) void claudeStatus.refresh(true);
+    void codexStatus.refresh(true);
   }
-  if (now - status.codex.at > 30000) {
-    jobs.push(codexServer.account().then((r) => {
-      status.codex.account = r.account;
-      if (r.rateLimits) status.codex.rateLimits = r.rateLimits;
-      status.codex.at = Date.now();
-    }).catch((e) => { status.codex.error = e.message; }));
-  }
-  await Promise.all(jobs);
+  const claude = claudeExe ? claudeStatus.read() : { refreshing: false, updatedAt: null, error: '找不到 Claude 命令行' };
+  const codex = codexStatus.read();
   return {
-    claude: { account: status.claude.account, limits: status.claude.limits, probing: status.claude.probing },
-    codex: { account: status.codex.account, rateLimits: status.codex.rateLimits, error: status.codex.error },
+    claude: { ...status.claude, refreshing: claude.refreshing, updatedAt: claude.updatedAt, error: claude.error },
+    codex: { ...status.codex, refreshing: codex.refreshing, updatedAt: codex.updatedAt, error: codex.error },
   };
 }
 
@@ -160,7 +180,7 @@ const server = http.createServer(async (req, res) => {
       ]);
       return send(res, 200, { claude, codex, context: projectContext(p) });
     }
-    if (req.method === 'GET' && url.pathname === '/api/status') return send(res, 200, await getStatus());
+    if (req.method === 'GET' && url.pathname === '/api/status') return send(res, 200, getStatus(url.searchParams.get('refresh') === '1'));
     // 主动刷新 Claude 额度：发一条最小的 Haiku 请求，会消耗极少额度
     if (req.method === 'POST' && url.pathname === '/api/status/refresh-claude') {
       if (!claudeExe) return send(res, 500, { error: '找不到 Claude 命令行' });
@@ -293,6 +313,7 @@ server.listen(port, '127.0.0.1', () => {
   if (process.argv.includes('--open')) exec(`start "" "${url}"`);
   // 提前启动 Codex 后台，打开网页时不用等
   codexServer.start().then(() => getModels()).catch((e) => console.error('Codex 启动失败：', e.message));
+  getStatus(); // 后台预热账号，页面不等待命令行查询。
 });
 
 async function shutdown() {
