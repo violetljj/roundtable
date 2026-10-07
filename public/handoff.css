@@ -1,37 +1,40 @@
+/* 执行交接面板：和小实验、主张详情共用同一套头部、表单与状态样式（变量见 style.css）。 */
 #handoffDialog { width: min(900px, calc(100vw - 32px)); max-width: 900px; max-height: calc(100dvh - 32px); padding: 0; overflow: auto; }
 #handoffDialog[open] { display: flex; flex-direction: column; }
 #handoffDialog [hidden] { display: none !important; }
-.hf-head { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 20px 26px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.hf-head h3 { margin: 2px 0 0; font-size: 21px; }
-.hf-head .icon-btn { font-size: 26px; }
-.hf-eyebrow { font-size: 12px; letter-spacing: .05em; color: var(--muted); }
-.hf-body { padding: 18px 26px 26px; overflow: auto; }
+.hf-head { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 20px 22px 16px 26px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.hf-head h3 { margin: 4px 0 0; font: 650 20px/1.4 var(--serif); letter-spacing: .03em; }
+.hf-head .icon-btn { font-size: 22px; }
+.hf-eyebrow { font-size: 12px; letter-spacing: .08em; color: var(--muted); }
+.hf-body { padding: 20px 26px 26px; overflow: auto; }
 .hf-topic { margin: 0 0 14px; color: var(--muted); overflow-wrap: anywhere; }
-.hf-status { display: inline-block; font-weight: 600; border-radius: 8px; padding: 6px 12px; color: var(--codex); background: var(--codex-soft); }
+/* 没有任务或还在草稿时用中性色，进行中和完成才用绿色 */
+.hf-status { display: inline-block; font-size: 13px; font-weight: 600; border-radius: 99px; padding: 3px 12px; color: var(--muted); background: var(--panel-2); }
+.hf-status:is([data-status="running"], [data-status="reviewing"], [data-status="ready"], [data-status="merged"], [data-status="completed"]) { color: var(--ok); background: var(--ok-soft); }
 .hf-status[data-status="failed"], .hf-status[data-status="cancelled"] { background: var(--warn-soft); color: var(--warn); }
-.hf-note { font-size: 12px; color: var(--muted); line-height: 1.7; }
-.hf-error { border: 1px solid var(--warn); color: var(--warn); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hf-note { font-size: 12.5px; color: var(--muted); line-height: 1.7; }
+.hf-error { border: 1px solid var(--warn-line); background: var(--warn-soft); color: var(--warn); border-radius: 10px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .hf-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; margin-top: 18px; }
 .hf-fields label:nth-child(2) { grid-column: 1 / -1; }
 .hf-fields label:first-child { grid-column: 1 / -1; }
-#handoffDialog label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; margin: 0; }
-#handoffDialog textarea, #handoffDialog input, #handoffDialog select { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; }
-#handoffDialog textarea:focus, #handoffDialog input:focus, #handoffDialog select:focus { outline: 2px solid var(--codex); outline-offset: 1px; }
+#handoffDialog label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); margin: 0; }
+#handoffDialog textarea, #handoffDialog input, #handoffDialog select { background: var(--panel); color: var(--text); border: 1px solid var(--line-strong); border-radius: 10px; padding: 9px 12px; font-size: 14px; }
+#handoffDialog textarea:focus, #handoffDialog input:focus, #handoffDialog select:focus { outline: none; border-color: var(--text); box-shadow: 0 0 0 3px var(--ink-soft); }
 #handoffDialog textarea { width: 100%; resize: vertical; min-height: 80px; line-height: 1.65; }
-#handoffDialog textarea:disabled { opacity: 1; color: var(--muted); }
+#handoffDialog textarea:disabled { opacity: 1; color: var(--muted); background: var(--panel-2); }
 .hf-options { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 16px; }
 .hf-options select, .hf-options input { width: 100%; min-width: 0; }
 .hf-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
-.hf-save-status { font-size: 12px; color: var(--muted); }
+.hf-save-status { font-size: 12.5px; color: var(--muted); }
 .hf-result { margin-top: 20px; }
-.hf-meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 14px; font-size: 12px; }
+.hf-meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 14px; font-size: 12.5px; }
 .hf-meta dt { color: var(--muted); }
 .hf-meta dd { margin: 0; overflow-wrap: anywhere; }
 .hf-result details { border: 1px solid var(--line); border-radius: 10px; margin-top: 12px; overflow: hidden; }
 .hf-result summary { padding: 10px 14px; background: var(--panel-2); font-size: 13px; font-weight: 600; cursor: pointer; }
-.hf-result pre { max-height: 430px; overflow: auto; padding: 14px; margin: 0; font: 12px/1.7 Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hf-result pre { max-height: 430px; overflow: auto; padding: 14px; margin: 0; font: 12.5px/1.7 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .hf-result [data-result="diff"] pre { white-space: pre; }
-.hf-merge-confirm { padding: 14px; margin-top: 14px; border: 1px solid var(--codex); border-radius: 10px; background: var(--codex-soft); font-size: 13px; }
+.hf-merge-confirm { padding: 14px 16px; margin-top: 14px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel-2); font-size: 13.5px; }
 .hf-merge-confirm code { display: block; overflow-wrap: anywhere; }
 .hf-merge-confirm button { margin-right: 8px; }
 @media (max-width: 600px) {

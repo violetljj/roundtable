@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>圆桌讨论室</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%23D97757' stroke-width='4'/><circle cx='16' cy='16' r='5' fill='%2310A37F'/></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16.5' r='8' fill='none' stroke='%231f1e1b' stroke-width='2.4'/><circle cx='16' cy='3.6' r='3.4' fill='%233a62d0'/><circle cx='4.8' cy='23' r='3.4' fill='%23c4643f'/><circle cx='27.2' cy='23' r='3.4' fill='%230f8467'/></svg>">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
 <div class="app">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <span class="brand-mark"></span>
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16.5" r="8" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="16" cy="3.6" r="3.2" fill="var(--user)"/><circle cx="4.8" cy="23" r="3.2" fill="var(--claude)"/><circle cx="27.2" cy="23" r="3.2" fill="var(--codex)"/></svg>
       <div>
         <div class="brand-name">圆桌讨论室</div>
         <div class="brand-sub">Claude × Codex</div>
@@ -22,7 +22,7 @@
     <ul class="room-list" id="roomList" aria-label="讨论记录"></ul>
     <div class="side-foot">
       <details class="accounts" id="accounts">
-        <summary>账号与额度 <button class="link" id="refreshStatus" title="重新读取账号和额度">刷新</button></summary>
+        <summary><span>额度</span><span class="quota-brief" id="quotaBrief"></span><button class="link" id="refreshStatus" title="重新读取账号和额度">刷新</button></summary>
         <div class="acct claude" id="acctClaude"><div class="acct-head"><span class="dot sm claude">C</span><b>Claude</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
         <div class="acct codex" id="acctCodex"><div class="acct-head"><span class="dot sm codex">X</span><b>Codex</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
       </details>
@@ -33,10 +33,13 @@
     <button class="icon-btn menu-btn floating" id="menuBtn2" title="讨论列表" aria-label="打开讨论列表">☰</button>
     <section class="empty" id="emptyState">
       <div class="empty-card">
-        <div class="trio">
-          <span class="dot user">你</span><span class="dot claude">C</span><span class="dot codex">X</span>
-        </div>
-        <div class="eyebrow">两个视角，一个更清晰的判断</div>
+        <svg class="table-art" viewBox="0 0 240 200" aria-hidden="true">
+          <path class="ta-talk" d="M120 34 L54 150 L186 150 Z"/>
+          <circle class="ta-table" cx="120" cy="108" r="46"/>
+          <g class="ta-seat user"><circle cx="120" cy="34" r="17"/><text x="120" y="39">你</text></g>
+          <g class="ta-seat claude"><circle cx="54" cy="150" r="17"/><text x="54" y="155">C</text></g>
+          <g class="ta-seat codex"><circle cx="186" cy="150" r="17"/><text x="186" y="155">X</text></g>
+        </svg>        <div class="eyebrow">两个视角，一个更清晰的判断</div>
         <h1>把问题放到圆桌上。</h1>
         <p>Claude 与 Codex 独立思考、交叉讨论，与你一起把想法推向结论。</p>
         <ol class="steps">
@@ -132,20 +135,39 @@
 <dialog id="roomToolsDialog" class="drawer" aria-labelledby="roomToolsTitle">
   <div class="drawer-head"><h3 id="roomToolsTitle">本场设置</h3><button class="icon-btn" id="closeRoomTools" aria-label="关闭本场设置">×</button></div>
   <div class="drawer-body">
-    <section class="tool-section">
-      <div class="ts-head"><h4>约束与事实卡</h4><button class="link" id="factsChip" title="查看或修改约束与事实卡">编辑</button></div>
+    <section class="tool-section" id="factsSection">
+      <div class="ts-head"><h4>约束与事实卡 <span class="ver" id="factsVer"></span></h4><button class="link" id="factsChip" title="查看或修改约束与事实卡">编辑</button></div>
       <p class="facts-preview" id="factsPreview"></p>
+      <form class="inline-edit" id="factsForm">
+        <textarea id="factsText" rows="8" aria-label="约束与事实卡内容" placeholder="当前目标：……&#10;最新约束：……&#10;已核实的事实：……（注明来源，比如文件路径）&#10;待核实的说法：……"></textarea>
+        <p class="fine">保存后版本号 +1。双方下一次发言会同时收到新旧两版，旧版作废；与旧对话或记忆冲突时以这张卡为准。</p>
+        <details class="history" id="factsHistory"><summary>历史版本</summary><div></div></details>
+        <div class="inline-actions"><button type="button" class="btn sm ghost" id="cancelFacts">取消</button><button type="submit" class="btn sm primary">保存为新版本</button></div>
+      </form>
     </section>
-    <section class="tool-section">
+    <section class="tool-section" id="modelsSection">
       <div class="ts-head"><h4>模型</h4><span class="ts-note">下一次发言生效</span></div>
       <button class="tool-row" id="chipClaude"></button>
       <button class="tool-row" id="chipCodex"></button>
+      <form class="inline-edit" id="modelsForm">
+        <div class="model-picker" data-picker="room"></div>
+        <div class="inline-actions"><button type="button" class="btn sm ghost" id="cancelModels">取消</button><button type="submit" class="btn sm primary">应用</button></div>
+      </form>
     </section>
-    <section class="tool-section">
+    <section class="tool-section" id="usageSection">
       <div class="ts-head"><h4>用量与上限</h4></div>
       <button class="tool-row" id="usageChip"></button>
-    </section>
-    <section class="tool-section">
+      <form class="inline-edit" id="usageForm">
+        <div class="usage-table" id="usageTable"></div>
+        <p class="fine">token 数来自 Claude 命令行和 Codex 的报告；"输入"包含读缓存的部分。</p>
+        <div class="grid2">
+          <label>发言上限（0 = 不限）<input type="number" min="0" max="200" id="setMaxTurns"></label>
+          <label>讨论轮数<input type="number" min="1" max="20" id="setMaxRounds"></label>
+        </div>
+        <p class="fine">达到上限时讨论会暂停；总结、复核、定稿和你主动提的问题不受限制。</p>
+        <div class="inline-actions"><button type="button" class="btn sm ghost" id="cancelUsage">收起</button><button type="submit" class="btn sm primary">保存设置</button></div>
+      </form>
+    </section>    <section class="tool-section">
       <div class="ts-head"><h4>主张与核查</h4></div>
       <div id="claimBoardHost"></div>
     </section>
@@ -223,52 +245,6 @@
       <button type="submit" class="btn primary" id="createBtn">开始讨论</button>
     </div>
     <div class="form-error" id="formError"></div>
-  </form>
-</dialog>
-
-<dialog id="modelsDialog">
-  <form method="dialog" id="modelsForm">
-    <h3>切换模型和推理强度</h3>
-    <p class="fine">从双方的下一次发言开始生效，正在进行的发言不受影响。</p>
-    <div class="model-picker" data-picker="room"></div>
-    <div class="dialog-actions">
-      <button type="button" class="btn ghost" id="cancelModels">取消</button>
-      <button type="submit" class="btn primary">应用</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog id="factsDialog">
-  <form method="dialog" id="factsForm">
-    <h3>约束与事实卡 <span class="ver" id="factsVer"></span></h3>
-    <p class="fine">固定附在双方每一次发言的开头，与旧对话、记忆或之前的说法冲突时以它为准。保存后版本号 +1，双方下一次发言时会收到新旧两个版本，明确旧版本作废。</p>
-    <textarea id="factsText" rows="9" aria-label="约束与事实卡内容" placeholder="当前目标：……&#10;最新约束：……&#10;已核实的事实：……（注明来源，比如文件路径）&#10;待核实的说法：……"></textarea>
-    <details class="history" id="factsHistory"><summary>历史版本</summary><div></div></details>
-    <div class="dialog-actions">
-      <button type="button" class="btn ghost" id="cancelFacts">取消</button>
-      <button type="submit" class="btn primary">保存为新版本</button>
-    </div>
-  </form>
-</dialog>
-
-<dialog id="usageDialog">
-  <form method="dialog" id="usageForm">
-    <h3>本场用量与上限</h3>
-    <div class="usage-table" id="usageTable"></div>
-    <p class="fine">token 数来自 Claude 命令行和 Codex 的报告。"输入"包含读缓存的部分，读缓存比新输入便宜得多。</p>
-    <div class="grid2">
-      <label>本场发言上限（0 = 不限）
-        <input type="number" min="0" max="200" id="setMaxTurns">
-      </label>
-      <label>讨论轮数
-        <input type="number" min="1" max="20" id="setMaxRounds">
-      </label>
-    </div>
-    <p class="fine">达到发言上限时讨论会暂停；总结、复核、定稿和你主动提的问题不受限制。</p>
-    <div class="dialog-actions">
-      <button type="button" class="btn ghost" id="cancelUsage">关闭</button>
-      <button type="submit" class="btn primary">保存设置</button>
-    </div>
   </form>
 </dialog>
 

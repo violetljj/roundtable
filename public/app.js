@@ -193,6 +193,13 @@ function renderStatus(s) {
   if (rl?.credits && !rl.credits.unlimited && rl.credits.balance != null) html += `<div class="sub">积分余额 ${Number(rl.credits.balance).toLocaleString('zh-CN', { maximumFractionDigits: 0 })}</div>`;
   if (rl?.rateLimitReachedType) html += '<div class="bad">已达到额度上限</div>';
   setAcct('codex', xa?.planType ?? rl?.planType, html);
+
+  // 侧栏折叠时只看两个数字：各自最紧的那个额度窗口用了多少
+  const fresh = (resetsAt) => !resetsAt || resetsAt * 1000 > Date.now();
+  const claudeWin = Object.values(lim?.unifiedWindows ?? {}).filter((w) => fresh(w.resetsAt)).map((w) => w.utilization * 100);
+  const codexWin = [rl?.primary, rl?.secondary].filter((w) => w && fresh(w.resetsAt)).map((w) => w.usedPercent);
+  const brief = (who, list) => list.length ? `<span class="qb" title="${NAMES[who]} 用得最多的额度窗口"><i class="${who}"></i>${Math.round(Math.max(...list))}%</span>` : '';
+  $('#quotaBrief').innerHTML = brief('claude', claudeWin) + brief('codex', codexWin);
 }
 
 function statusFreshness(account) {
@@ -323,6 +330,7 @@ function openRoom(id) {
   $('#roomView').classList.remove('hidden');
   $('#jumpSummaryBtn').classList.add('hidden');
   $('#timeline').innerHTML = '';
+  $('#statusDock').removeAttribute('data-state'); // 状态到达前不显示上一场的按钮
   $('#exportBtn').href = `/api/rooms/${id}/transcript`;
   es = new EventSource(`/api/rooms/${id}/events`);
   es.onmessage = (e) => handleEvent(JSON.parse(e.data));
@@ -411,12 +419,14 @@ function setState(s) {
   if (s.models) renderModelRows(s.models);
   $('#modePill').textContent = MODE_NAMES[s.mode] ?? '做决定';
   const f = s.facts ?? { version: 0, text: '' };
-  $('#factsChip').textContent = f.text ? '编辑' : '添加';
-  $('#factsPreview').textContent = f.text ? `v${f.version} · ${f.text}` : '还没有约束卡。写下目标、必须遵守的约束和已核实的事实，双方每次发言都会带上。';
+  const editingFacts = $('#factsSection').classList.contains('editing');
+  $('#factsChip').textContent = editingFacts ? '收起' : f.text ? '编辑' : '添加';
+  $('#factsVer').textContent = f.version ? `v${f.version}` : '';
+  $('#factsPreview').textContent = f.text || '还没有约束卡。写下目标、必须遵守的约束和已核实的事实，双方每次发言都会带上。';
   $('#factsPreview').classList.toggle('empty', !f.text);
   const turns = (s.usage?.claude.turns ?? 0) + (s.usage?.codex.turns ?? 0);
   toolRow($('#usageChip'), '已发言', `${turns} 次${s.maxTurns ? ` / 上限 ${s.maxTurns}` : ''} · 共 ${s.maxRounds} 轮`, '调整');
-  if ($('#usageDialog').open) renderUsage(s);
+  if ($('#usageSection').classList.contains('editing')) renderUsage(s);
   // 一次发言结束后，额度会变化
   if (prev && prev.speaking.length > s.speaking.length) setTimeout(loadStatus, 1500);
 
@@ -496,38 +506,49 @@ function renderUsage(s) {
     row('claude') + row('codex');
 }
 
+// 本场设置抽屉里的三处编辑都就地展开，不再从抽屉里再弹一层窗口
+function setEditing(section, on) {
+  $(section).classList.toggle('editing', on);
+  if (section === '#factsSection') $('#factsChip').textContent = on ? '收起' : current?.state?.facts?.text ? '编辑' : '添加';
+}
+function closeEditors() {
+  for (const id of ['#factsSection', '#modelsSection', '#usageSection']) setEditing(id, false);
+}
+$('#roomToolsDialog').addEventListener('close', closeEditors);
+
 $('#factsChip').onclick = () => {
   const s = current?.state;
   if (!s) return;
+  if ($('#factsSection').classList.contains('editing')) return setEditing('#factsSection', false);
   const f = s.facts ?? { version: 0, text: '', history: [] };
-  $('#factsVer').textContent = f.version ? `当前 v${f.version}` : '（还没有）';
   $('#factsText').value = f.text;
   const hist = $('#factsHistory');
   hist.classList.toggle('hidden', !f.history?.length);
   hist.querySelector('div').innerHTML = (f.history ?? []).slice().reverse()
     .map((h) => `<div class="h-item"><b>v${h.version}</b>（已作废）\n${esc(h.text || '（空）')}</div>`).join('');
-  $('#factsDialog').showModal();
+  setEditing('#factsSection', true);
   $('#factsText').focus();
 };
-$('#cancelFacts').onclick = () => $('#factsDialog').close();
+$('#cancelFacts').onclick = () => setEditing('#factsSection', false);
 $('#factsForm').addEventListener('submit', (e) => {
   e.preventDefault();
-  $('#factsDialog').close();
+  setEditing('#factsSection', false);
   api(`/api/rooms/${current.id}/facts`, { text: $('#factsText').value }).catch((err) => alert(err.message));
 });
 
 $('#usageChip').onclick = () => {
   const s = current?.state;
   if (!s) return;
+  if ($('#usageSection').classList.contains('editing')) return setEditing('#usageSection', false);
   renderUsage(s);
   $('#setMaxTurns').value = s.maxTurns ?? 0;
   $('#setMaxRounds').value = s.maxRounds;
-  $('#usageDialog').showModal();
+  setEditing('#usageSection', true);
 };
-$('#cancelUsage').onclick = () => $('#usageDialog').close();
+$('#cancelUsage').onclick = () => setEditing('#usageSection', false);
 $('#usageForm').addEventListener('submit', (e) => {
   e.preventDefault();
-  $('#usageDialog').close();
+  setEditing('#usageSection', false);
   api(`/api/rooms/${current.id}/settings`, { maxTurns: $('#setMaxTurns').value, maxRounds: $('#setMaxRounds').value }).catch((err) => alert(err.message));
 });
 
@@ -627,6 +648,9 @@ function renderMsg(m) {
   if (m.status === 'failed') tags.push(['bad', '出错']);
 
   const time = new Date(m.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  const prevBody = el.querySelector('.body');
+  const liveFollow = !prevBody || prevBody.scrollHeight - prevBody.scrollTop - prevBody.clientHeight < 40;
+  const liveTop = prevBody?.scrollTop ?? 0;
   el.innerHTML = `<div class="dot ${m.from}">${experimentRequest ? '室' : LETTER[m.from]}</div>
     <div class="bubble">
       <div class="who"><b>${experimentRequest ? '讨论室' : NAMES[m.from]}</b>${tags.map(([c, t]) => `<span class="tag ${c}">${esc(t)}</span>`).join('')}<time>${time}</time></div>
@@ -643,23 +667,27 @@ function renderMsg(m) {
     bubble.insertAdjacentHTML('beforeend', '<button type="button" class="msg-link" data-open-result>查看结论 →</button>');
     // 已结束、复核有内容、还没有定稿：可以补一份定稿
     const hasFinal = [...current.msgs.values()].some((x) => x.kind === 'final' && x.status === 'complete');
-    if (m.kind === 'review' && !hasFinal && current.state?.phase === 'done') {
+    if (m.kind === 'review' && !hasFinal && current.state?.phase === 'done' && !/^\s*【复核】\s*无异议/.test(m.text)) {
       bubble.insertAdjacentHTML('beforeend', ` <button class="btn copy-btn" data-finalize title="让一方把复核里的更正合并进总结（多一次模型调用，由额度更宽裕的一方来写）">合并成定稿</button>`);
     }
     if (m.kind === 'summary') $('#jumpSummaryBtn').classList.remove('hidden');
   }
 
-  // 独立提案两栏并排：完成后折叠过长的一方，避免两栏高度悬殊留下大片空白
-  if (el.parentElement?.classList.contains('pair') && m.status === 'complete') {
+  // 独立提案两栏并排：卡片高度从写的时候起就固定，写完再折叠，页面不会突然回缩
+  if (el.parentElement?.classList.contains('pair')) {
     const bubble = el.querySelector('.bubble');
-    const open = expandedPairs.has(m.id);
-    bubble.classList.add('foldable');
-    bubble.classList.toggle('folded', !open);
-    requestAnimationFrame(() => {
-      const b = bubble.querySelector('.body');
-      if (!open && b.scrollHeight <= b.clientHeight + 8) { bubble.classList.remove('folded', 'foldable'); return; }
-      if (!bubble.querySelector('[data-fold]')) b.insertAdjacentHTML('afterend', `<button type="button" class="fold-btn" data-fold="${m.id}">${open ? '收起' : '展开全文'}</button>`);
-    });
+    if (m.status === 'streaming') {
+      bubble.classList.add('live');
+      // 用户在卡片里往上翻时不强行拉回底部
+      body.scrollTop = liveFollow ? body.scrollHeight : liveTop;
+      bubble.classList.toggle('overflow', body.scrollHeight > body.clientHeight + 8);
+    } else {
+      const open = expandedPairs.has(m.id);
+      bubble.classList.toggle('folded', !open);
+      if (open || body.scrollHeight > body.clientHeight + 8) {
+        body.insertAdjacentHTML('afterend', `<button type="button" class="fold-btn" data-fold="${m.id}">${open ? '收起' : '展开全文'}</button>`);
+      } else bubble.classList.remove('folded');
+    }
   }
 
   if (m.activity?.length) {
@@ -860,23 +888,23 @@ async function onProjectChange() {
 $('#projectSelect').addEventListener('change', onProjectChange);
 $('#cwdInput').addEventListener('change', onProjectChange);
 
-async function openModelsDialog() {
+async function openModelEditor() {
   if (!current?.state) return;
+  if ($('#modelsSection').classList.contains('editing')) return setEditing('#modelsSection', false);
   await renderPicker(document.querySelector('[data-picker="room"]'), current.state.models);
-  $('#modelsDialog').showModal();
+  setEditing('#modelsSection', true);
 }
-$('#chipClaude').onclick = openModelsDialog;
-$('#chipCodex').onclick = openModelsDialog;
+$('#chipClaude').onclick = openModelEditor;
+$('#chipCodex').onclick = openModelEditor;
+// 实验、执行交接和主张详情是完整的工作面板：先收起抽屉再打开，避免窗口叠窗口
 $('#roomToolsDialog').addEventListener('click', (event) => {
-  if (event.target.closest('#factsChip, #usageChip, #chipClaude, #chipCodex, #experimentBtn, #handoffBtn')) {
-    $('#roomToolsDialog').close();
-  }
+  if (event.target.closest('#experimentBtn, #handoffBtn, .claim-row')) $('#roomToolsDialog').close();
 }, { capture: true });
-$('#cancelModels').onclick = () => $('#modelsDialog').close();
+$('#cancelModels').onclick = () => setEditing('#modelsSection', false);
 $('#modelsForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const body = readPicker(document.querySelector('[data-picker="room"]'));
-  $('#modelsDialog').close();
+  setEditing('#modelsSection', false);
   api(`/api/rooms/${current.id}/models`, body).catch((err) => alert(err.message));
 });
 

@@ -114,11 +114,15 @@ export function initNotifications({ openRoom, window: win = globalThis.window, d
   function render(problem = '') {
     const permission = supported ? NotificationAPI.permission : 'unavailable';
     const on = enabled && permission === 'granted';
-    button.textContent = `桌面通知：${!supported ? '不可用' : permission === 'denied' ? '被浏览器阻止' : on ? '已开启' : '未开启'}`;
+    button.textContent = `通知${!supported ? '不可用' : permission === 'denied' ? '被浏览器阻止' : on ? '已开启' : '未开启'}`;
+    button.setAttribute('data-on', String(on));
     button.setAttribute('aria-pressed', String(on));
     button.disabled = !supported || permission === 'denied';
     hint.textContent = problem || (!supported ? '当前浏览器不支持桌面通知。' : permission === 'denied'
       ? '请在浏览器的网站权限中允许通知，再点击开启。' : '仅通知当前打开的讨论；关闭页面后不通知。');
+    // 说明放进悬停提示，只有出错时才常驻显示，侧栏底部保持一行
+    button.title = hint.textContent;
+    hint.setAttribute('data-shown', String(!!problem));
   }
   function saveEnabled(value) {
     enabled = value;
