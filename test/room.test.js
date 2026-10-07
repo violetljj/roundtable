@@ -77,6 +77,36 @@ async function enterDiscussion({ room, claude, codex }) {
   await waitFor(() => room.d.phase === 'discussion' && room.speaking.size === 1);
 }
 
+test('新建默认模型与显式设置、历史记录分开', (t) => {
+  const room = makeRoom({});
+  t.after(() => {
+    clearTimeout(room.saveTimer);
+    fs.rmSync(path.dirname(room.dir), { recursive: true });
+  });
+  assert.deepEqual(room.d.models, {
+    claude: { model: 'claude-opus-5-5', effort: 'high' },
+    codex: { model: 'gpt-6-astra', effort: 'high' },
+  });
+  room.updateModels({ claude: { model: 'haiku', effort: '' } });
+  assert.deepEqual(room.d.models.codex, { model: 'gpt-6-astra', effort: 'high' });
+  room.updateModels({ codex: { model: '', effort: '' } });
+  room.save(true);
+  assert.deepEqual(Room.load(room.dir, {}).d.models, room.d.models);
+
+  const explicit = Room.create({ topic: '显式跟随', models: { claude: { model: '', effort: '' } } }, { roomsDir: path.dirname(room.dir) });
+  assert.deepEqual(explicit.d.models, {
+    claude: { model: '', effort: '' },
+    codex: { model: 'gpt-6-astra', effort: 'high' },
+  });
+  const old = JSON.parse(fs.readFileSync(path.join(room.dir, 'state.json'), 'utf8'));
+  delete old.models;
+  old.claudeModel = 'sonnet';
+  fs.writeFileSync(path.join(room.dir, 'state.json'), JSON.stringify(old));
+  assert.deepEqual(Room.load(room.dir, {}).d.models, {
+    claude: { model: 'sonnet', effort: '' }, codex: { model: '', effort: '' },
+  });
+});
+
 test('复核结论识别', () => {
   assert.equal(reviewHasCorrections('【复核】无异议\n最重要的是先冻结参数。'), false);
   assert.equal(reviewHasCorrections('【复核】有更正\n1. 我没有建议登记 ToF 任务。'), true);

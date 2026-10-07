@@ -251,6 +251,10 @@ $('#accounts').addEventListener('toggle', () => {
 // ---------- 模型选择 ----------
 let models = null;
 let modelsLoading = null;
+const DEFAULT_MODELS = {
+  claude: { model: 'claude-opus-5-5', effort: 'high' },
+  codex: { model: 'gpt-6-astra', effort: 'high' },
+};
 async function loadModels() {
   if (!models) {
     modelsLoading ??= api('/api/models').catch(() => null).finally(() => { modelsLoading = null; });
@@ -265,9 +269,17 @@ const EFFORT_NAME = { low: '低 low', medium: '中 medium', high: '高 high', xh
 
 async function renderPicker(container, value) {
   const m = await loadModels();
-  const v = value ?? { claude: { model: 'sonnet', effort: '' }, codex: { model: '', effort: '' } };
-  const cm = m?.claude.models ?? [{ id: 'sonnet', name: 'Sonnet' }];
-  const xm = m?.codex.models ?? [];
+  const v = value ?? DEFAULT_MODELS;
+  const cm = [...(m?.claude.models ?? [{ id: 'sonnet', name: 'Sonnet' }])];
+  const xm = [...(m?.codex.models ?? [])];
+  // 固定型号和暂未加载的型号保留在选项里，避免保存时变成跟随设置。
+  for (const [who, list] of [['claude', cm], ['codex', xm]]) {
+    const id = v[who].model;
+    if (id && !list.some((x) => x.id === id)) {
+      const name = { 'claude-opus-5-5': 'Opus 5.5', 'gpt-6-astra': 'Astra' }[id] ?? id;
+      list.push({ id, name });
+    }
+  }
   container.innerHTML = `
     <div class="mp-row"><span class="who-l"><span class="dot sm claude">C</span>Claude</span>
       <select data-k="claude.model" aria-label="Claude 模型">${cm.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</select>
@@ -279,13 +291,13 @@ async function renderPicker(container, value) {
   const sel = (k) => container.querySelector(`[data-k="${k}"]`);
   const fillEfforts = (who) => {
     const modelId = sel(`${who}.model`).value;
-    const list = who === 'claude' ? (m?.claude.efforts ?? []) : (xm.find((x) => x.id === modelId)?.efforts ?? ['low', 'medium', 'high', 'xhigh']);
+    const list = who === 'claude' ? (m?.claude.efforts ?? ['low', 'medium', 'high']) : (xm.find((x) => x.id === modelId)?.efforts ?? ['low', 'medium', 'high', 'xhigh']);
     const def = who === 'codex' ? xm.find((x) => x.id === modelId)?.defaultEffort : null;
     const keep = sel(`${who}.effort`).value || v[who].effort;
     sel(`${who}.effort`).innerHTML = `<option value="">默认强度${def ? `（${def}）` : ''}</option>` + list.map((e) => `<option value="${e}">${EFFORT_NAME[e] ?? e}</option>`).join('');
     sel(`${who}.effort`).value = list.includes(keep) ? keep : '';
     if (who === 'claude') {
-      const note = { opus: 'Opus 能力更强，但消耗 Pro 额度明显更快', fable: 'Fable 消耗额度最快，你的套餐不一定支持', haiku: 'Haiku 最省额度，适合简单问题' }[modelId] ?? '';
+      const note = { opus: 'Opus 能力更强，但消耗 Pro 额度明显更快', 'claude-opus-5-5': 'Opus 能力更强，但消耗 Pro 额度明显更快', fable: 'Fable 消耗额度最快，你的套餐不一定支持', haiku: 'Haiku 最省额度，适合简单问题' }[modelId] ?? '';
       container.querySelector('[data-note="claude"]').textContent = note;
     }
   };
@@ -299,7 +311,10 @@ async function renderPicker(container, value) {
 }
 
 function readPicker(container) {
-  const g = (k) => container.querySelector(`[data-k="${k}"]`)?.value ?? (k === 'claude.model' ? 'sonnet' : '');
+  const g = (k) => {
+    const [who, field] = k.split('.');
+    return container.querySelector(`[data-k="${k}"]`)?.value ?? DEFAULT_MODELS[who][field];
+  };
   return { claude: { model: g('claude.model'), effort: g('claude.effort') }, codex: { model: g('codex.model'), effort: g('codex.effort') } };
 }
 
