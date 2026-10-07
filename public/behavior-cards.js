@@ -1,6 +1,7 @@
 // 本场设置里的双边行为卡：开关、勾选、添加、删除点了就保存；规则文字点「调整」才展开。
 // 每次保存也会成为之后新讨论的默认卡片（服务端负责），直到下次修改。
 const NAMES = { codex: 'Codex', claude: 'Claude' };
+const KINDS = { strength: '长处', weakness: '短处' };
 
 let catalogLoading = null;
 // 预设、默认卡片和型号建议；新建窗口也用它显示将沿用哪些卡。
@@ -58,9 +59,11 @@ export function initBehaviorCards({ api, getCurrent }) {
     enabledInput.checked = settings.enabled;
     $('#behaviorVer').textContent = settings.version ? `v${settings.version}` : '';
     $('#behaviorSection').classList.toggle('off', !settings.enabled);
-    const active = settings.cards.filter((card) => isActive(state, card)).length;
-    $('#behaviorPreview').textContent = !settings.enabled ? '打开后，勾选的卡会作为“可能的倾向”提醒对应模型，不是给它下定论。规则来自你的经验，可以随时改。'
-      : active ? `${active} 张生效。双方都看得到，只作提醒：出现对应情况时照做，另一方只在确有争议时追问。`
+    const activeCards = settings.cards.filter((card) => isActive(state, card));
+    const active = activeCards.length;
+    const strengths = activeCards.filter((card) => card.kind === 'strength').length;
+    $('#behaviorPreview').textContent = !settings.enabled ? '打开后，勾选的卡会作为“可能的倾向”提醒双方扬长避短，不是给模型下定论。规则来自你的经验，可以随时改。'
+      : active ? `${active} 张生效（长处 ${strengths} · 短处 ${active - strengths}）。长处卡让对方主动请教，短处卡对方只在确有争议时追问。`
       : '没有卡片匹配当前型号。';
     renderPill(state);
     if (!editing) renderCards(state);
@@ -77,7 +80,7 @@ export function initBehaviorCards({ api, getCurrent }) {
       head.className = 'bcard-head';
       const toggle = document.createElement('label');
       toggle.className = 'bcard-toggle';
-      toggle.title = `触发：${card.trigger}\n动作：${card.action}`;
+      toggle.title = card.text || '还没写提醒内容';
       const check = document.createElement('input');
       check.type = 'checkbox'; check.checked = card.enabled; check.disabled = saving;
       check.onchange = () => save((next) => { next.cards.find((c) => c.id === card.id).enabled = check.checked; });
@@ -86,7 +89,10 @@ export function initBehaviorCards({ api, getCurrent }) {
       const who = document.createElement('span');
       who.className = `bcard-who ${card.subject}`;
       who.textContent = NAMES[card.subject];
-      toggle.append(check, title, who);
+      const kindTag = document.createElement('span');
+      kindTag.className = `bcard-kind ${card.kind}`;
+      kindTag.textContent = KINDS[card.kind];
+      toggle.append(check, title, who, kindTag);
       const edit = document.createElement('button');
       edit.type = 'button'; edit.className = 'link'; edit.textContent = '调整';
       edit.onclick = () => openEditor(item, card);
@@ -113,29 +119,37 @@ export function initBehaviorCards({ api, getCurrent }) {
     editing = { roomId: getCurrent().id, cardId: card.id };
     item.classList.add('editing');
     let subject = card.subject;
+    let kind = card.kind;
     const form = document.createElement('form');
     form.className = 'bcard-edit';
     form.innerHTML = `
       <label>名称<input name="title" required></label>
-      <div class="bcard-subject" role="group" aria-label="谁来执行"><span>谁来执行</span>
-        <div class="seg"><button type="button" data-s="claude">Claude</button><button type="button" data-s="codex">Codex</button></div></div>
-      <label>什么时候<textarea name="trigger" rows="2" required></textarea></label>
-      <label>怎么做<textarea name="action" rows="3" required></textarea></label>
+      <div class="bcard-subject">
+        <div class="seg" role="group" aria-label="提醒谁"><button type="button" data-s="claude">Claude</button><button type="button" data-s="codex">Codex</button></div>
+        <div class="seg" role="group" aria-label="长处还是短处"><button type="button" data-k="strength">长处</button><button type="button" data-k="weakness">短处</button></div></div>
+      <label>提醒<textarea name="text" rows="3" required placeholder="一两句话，比如：遇到界面问题时，直接给出具体方案，不只讲原则。"></textarea></label>
+      <p class="fine bcard-kind-hint"></p>
       <label>适用型号<input name="modelIds" required placeholder="完整型号 ID，逗号分隔"></label>
       <div class="bcard-chips"></div>
       <div class="inline-actions"><button type="button" class="link danger bcard-del">删除这张卡</button><span class="spacer"></span>
         <button type="button" class="btn sm ghost bcard-cancel">取消</button><button type="submit" class="btn sm primary">保存</button></div>`;
     form.elements.title.value = card.title;
-    form.elements.trigger.value = card.trigger;
-    form.elements.action.value = card.action;
+    form.elements.text.value = card.text;
     form.elements.modelIds.value = card.modelIds.join(', ');
     const segButtons = [...form.querySelectorAll('[data-s]')];
+    const kindButtons = [...form.querySelectorAll('[data-k]')];
     const catalog = await loadBehaviorCatalog(api);
     const chips = form.querySelector('.bcard-chips');
     const ids = () => form.elements.modelIds.value.split(/[,，\s]+/).map((id) => id.trim()).filter(Boolean);
     // 点型号建议即可加入或移出，免得手打完整 ID
     function renderChips() {
       segButtons.forEach((b) => { b.classList.toggle('on', b.dataset.s === subject); b.setAttribute('aria-pressed', String(b.dataset.s === subject)); });
+      kindButtons.forEach((b) => { b.classList.toggle('on', b.dataset.k === kind); b.setAttribute('aria-pressed', String(b.dataset.k === kind)); });
+      // 写明对方会怎么对待这张卡，长短处的区别一眼可见
+      const other = NAMES[subject === 'claude' ? 'codex' : 'claude'];
+      form.querySelector('.bcard-kind-hint').textContent = kind === 'strength'
+        ? `遇到这类问题时，${other} 会先请 ${NAMES[subject]} 出方案或重点参考它的意见。`
+        : `${other} 只在 ${NAMES[subject]} 确实出现这种情况、而且有争议时追问。`;
       const state = getCurrent()?.state;
       const choices = [...new Set([...(catalog?.modelChoices?.[subject] ?? []), state ? modelIdOf(state, subject) : ''].filter(Boolean))];
       chips.replaceChildren(...choices.map((id) => {
@@ -152,6 +166,7 @@ export function initBehaviorCards({ api, getCurrent }) {
       }));
     }
     segButtons.forEach((b) => { b.onclick = () => { subject = b.dataset.s; renderChips(); }; });
+    kindButtons.forEach((b) => { b.onclick = () => { kind = b.dataset.k; renderChips(); }; });
     form.elements.modelIds.addEventListener('input', renderChips);
     renderChips();
     form.querySelector('.bcard-cancel').onclick = closeEditor;
@@ -161,13 +176,12 @@ export function initBehaviorCards({ api, getCurrent }) {
     };
     form.onsubmit = async (event) => {
       event.preventDefault();
-      const changes = { title: form.elements.title.value.trim(), subject, modelIds: ids(),
-        trigger: form.elements.trigger.value.trim(), action: form.elements.action.value.trim() };
+      const changes = { title: form.elements.title.value.trim(), subject, kind, modelIds: ids(), text: form.elements.text.value.trim() };
       if (!changes.modelIds.length) { errorBox.textContent = '至少选一个适用型号。'; return; }
       if (await save((next) => Object.assign(next.cards.find((c) => c.id === card.id), changes))) closeEditor();
     };
     item.append(form);
-    form.elements.trigger.focus();
+    form.elements.text.focus();
   }
 
   function closeEditor() {
@@ -218,8 +232,8 @@ export function initBehaviorCards({ api, getCurrent }) {
         button.setAttribute('role', 'menuitem');
         button.innerHTML = '<b></b><span></span>';
         button.querySelector('b').textContent = preset.title;
-        button.querySelector('span').textContent = preset.kind;
-        button.title = `触发：${preset.trigger}\n动作：${preset.action}`;
+        button.querySelector('span').textContent = `${KINDS[preset.kind]}：${preset.note}`;
+        button.title = preset.text;
         button.onclick = () => addCard(preset);
         addMenu.append(button);
       }
@@ -239,8 +253,8 @@ export function initBehaviorCards({ api, getCurrent }) {
     const state = getCurrent()?.state;
     const subject = preset?.subject ?? 'claude';
     const card = preset
-      ? { id: preset.id, title: preset.title, subject, modelIds: [...preset.modelIds], scene: preset.scene, trigger: preset.trigger, action: preset.action, enabled: true }
-      : { id: `custom-${Date.now().toString(36)}`, title: '新行为卡', subject, modelIds: [modelIdOf(state, subject)].filter(Boolean), scene: 'general', trigger: '', action: '', enabled: true };
+      ? { id: preset.id, title: preset.title, subject, kind: preset.kind, modelIds: [...preset.modelIds], scene: preset.scene, text: preset.text, enabled: true }
+      : { id: `custom-${Date.now().toString(36)}`, title: '新行为卡', subject, kind: 'weakness', modelIds: [modelIdOf(state, subject)].filter(Boolean), scene: 'general', text: '', enabled: true };
     // 空白卡先存下来再展开编辑；没写触发和动作之前不会发给模型
     if (!preset) pendingEdit = card.id;
     if (!await save((next) => { next.cards.push(card); })) pendingEdit = null;

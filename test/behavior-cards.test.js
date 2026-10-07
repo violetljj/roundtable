@@ -45,11 +45,11 @@ test('默认关闭；开启后按具体型号匹配，Claude 别名按实际型�
   assert.deepEqual(behaviorCardsFor(data), []);
   assert.equal(behaviorPrompt(data, 'codex'), '');
   data.behaviorCards = settings();
-  assert.deepEqual(behaviorCardsFor(data).map((card) => card.subject), ['codex', 'claude']);
+  assert.deepEqual(behaviorCardsFor(data).map((card) => card.subject), ['codex', 'codex', 'claude', 'claude']);
   data.models = { ...models, codex: { model: 'gpt-6-astra-next' } };
-  assert.deepEqual(behaviorCardsFor(data).map((card) => card.subject), ['claude']);
+  assert.deepEqual(behaviorCardsFor(data).map((card) => card.subject), ['claude', 'claude']);
   data.models = { ...models, codex: { model: '' } };
-  assert.deepEqual(behaviorCardsFor(data).map((card) => card.subject), ['claude']);
+  assert.deepEqual(behaviorCardsFor(data).map((card) => card.subject), ['claude', 'claude']);
   // opus 和命令行默认都解析成 claude-opus-5-5；haiku 不在适用型号里
   for (const alias of ['opus', '', 'fable']) {
     data.models = { ...models, claude: { model: alias } };
@@ -64,7 +64,7 @@ test('默认关闭；开启后按具体型号匹配，Claude 别名按实际型�
   assert.ok(behaviorCardsFor(data).some((card) => card.subject === 'codex'));
   // 没写完触发和动作的空白卡不发给模型
   data.behaviorCards = normalizeBehaviorCards({ ...data.behaviorCards, cards: [...data.behaviorCards.cards,
-    { id: 'blank', title: '新行为卡', subject: 'codex', modelIds: ['custom-model'], trigger: '', action: '' }] });
+    { id: 'blank', title: '新行为卡', subject: 'codex', modelIds: ['custom-model'], text: '' }] });
   assert.ok(!behaviorCardsFor(data).some((card) => card.id === 'blank'));
 });
 
@@ -100,9 +100,11 @@ test('重命名只改显示名，不进入模型提示；清空恢复原始议�
 test('同一条件动作双边可见，自律和条件性追问分开；无卡时明确撤销', () => {
   const data = { models, behaviorCards: settings(), behaviorCardsSeen: { claude: '', codex: '' } };
   const own = behaviorPrompt(data, 'codex'), peer = behaviorPrompt(data, 'claude');
-  assert.ok(own.includes(data.behaviorCards.cards[0].action));
-  assert.ok(peer.includes(data.behaviorCards.cards[0].action));
-  assert.ok(own.includes('出现这种情况时照做')); assert.ok(peer.includes('条件性追问'));
+  assert.ok(own.includes(data.behaviorCards.cards[0].text));
+  assert.ok(peer.includes(data.behaviorCards.cards[0].text));
+  // 短处：本人留意、对方只在确有争议时追问；长处：本人多承担、对方主动请教
+  assert.ok(own.includes('出现这种情况时照做')); assert.ok(peer.includes('才追问'));
+  assert.ok(own.includes('主动多承担')); assert.ok(peer.includes('先请对方出方案'));
   assert.ok(own.includes('不代表你或对方一定有'));
   assert.ok(peer.includes('用户经验，尚未验证'));
   data.behaviorCardsSeen.codex = behaviorSignature(data);
@@ -197,17 +199,24 @@ test('编辑动作与停用单卡：下一轮使用当前卡，旧发言快照�
   const { room, claude, codex } = ctx;
   await discussion(ctx);
   const edited = JSON.parse(JSON.stringify(room.d.behaviorCards));
-  edited.cards[0].action = '仅检查当前输入契约支持的失败路径，保留必要保护。';
+  edited.cards[0].text = '仅检查当前输入契约支持的失败路径，保留必要保护。';
   room.updateSettings({ behaviorCards: edited });
   claude.turns[1].finish(); await waitFor(() => codex.turns.length === 2);
-  assert.ok(codex.prompts[1].includes(edited.cards[0].action));
-  assert.ok(!room.d.messages.find((m) => m.from === 'codex' && m.phase === 'independent').behaviorCards.cards[0].action.includes(edited.cards[0].action));
+  assert.ok(codex.prompts[1].includes(edited.cards[0].text));
+  assert.ok(!room.d.messages.find((m) => m.from === 'codex' && m.phase === 'independent').behaviorCards.cards[0].text.includes(edited.cards[0].text));
   const disabled = JSON.parse(JSON.stringify(room.d.behaviorCards));
   disabled.cards[0].enabled = false;
   room.updateSettings({ behaviorCards: disabled });
   codex.turns[1].finish(); await waitFor(() => claude.turns.length === 3);
   assert.ok(claude.prompts[2].includes('发散之后落到可执行方向'));
   assert.ok(claude.prompts[2].includes('探索阶段照常发散'));
-  assert.ok(!claude.prompts[2].includes(edited.cards[0].action));
+  assert.ok(!claude.prompts[2].includes(edited.cards[0].text));
   assert.equal(room.d.behaviorCards.version, 2);
+});
+
+test('旧卡的触发和动作两栏合成一句提醒；未知类型按短处处理', () => {
+  const [card] = normalizeBehaviorCards({ cards: [{ id: 'old', title: '旧卡', subject: 'codex', modelIds: ['gpt-6-astra'], trigger: '提出额外保护时。', action: '说明必要性。' }] }).cards;
+  assert.equal(card.text, '提出额外保护时。 说明必要性。');
+  assert.equal(card.kind, 'weakness');
+  assert.equal('trigger' in card, false);
 });

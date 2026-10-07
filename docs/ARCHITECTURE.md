@@ -80,11 +80,11 @@ done：自由问答，只回应用户新消息
 
 ## 双边行为卡
 
-`d.behaviorCards` 保存本场总开关、版本和条件动作卡。卡片含 ID、标题、subject、精确 modelIds、场景标签（engineering／creative／general，只给人辨认，不参与匹配）、单卡开关、trigger/action；来源始终为「用户经验，尚未验证」。旧记录里的 `scene` 字段载入时丢弃。不读取历史纠正自动形成模型画像。
+`d.behaviorCards` 保存本场总开关、版本和卡片。卡片含 ID、标题、subject、`kind`（strength／weakness）、精确 modelIds、场景标签（engineering／creative／general，只给人辨认，不参与匹配）、单卡开关和一句 `text` 提醒；来源始终为「用户经验，尚未验证」。旧记录里的 `scene` 字段载入时丢弃；旧卡的 trigger/action 合成 `text`，没有 kind 的按短处处理。不读取历史纠正自动形成模型画像。
 
-`behaviorCardsFor()` 按总开关、单卡开关、trigger/action 非空和目标方当前型号筛选；何时执行由卡片自己的触发条件决定，不再要求每场预选场景（曾有的本场场景选择与触发条件重复，混合任务只能二选一）。型号比较用 `effectiveModelId()`：Claude 别名和命令行默认经 `resolveClaudeAlias()` 换成命令行实际报告的完整 ID，Codex 用原值；未知型号不推断。`snapshot()` 附带 `behaviorActive`（生效卡 ID）和 `behaviorModelIds`，前端不重复实现解析。双方看到同样的卡，目标方出现对应情况时照做，另一方仅在对方确实出现、有实质争议且会改变方案选择时追问；不转发对方独立提案，也不改变主笔、连接器或执行权限。注入文字明确这是"可能倾向的提醒，不代表一定存在"，不要据此给对方下结论或矫枉过正。
+`behaviorCardsFor()` 按总开关、单卡开关、`text` 非空和目标方当前型号筛选；何时执行由卡片自己的触发条件决定，不再要求每场预选场景（曾有的本场场景选择与触发条件重复，混合任务只能二选一）。型号比较用 `effectiveModelId()`：Claude 别名和命令行默认经 `resolveClaudeAlias()` 换成命令行实际报告的完整 ID，Codex 用原值；未知型号不推断。`snapshot()` 附带 `behaviorActive`（生效卡 ID）和 `behaviorModelIds`，前端不重复实现解析。双方看到同样的卡，角色按 kind 区分（`ROLES`）：短处卡目标方出现对应情况时照做，另一方仅在对方确实出现、有实质争议且会改变方案选择时追问；长处卡目标方主动多承担，另一方遇到这类问题先请对方出方案或重点参考其意见、保留自己的判断。默认四张卡一长一短各一对；不转发对方独立提案，也不改变主笔、连接器或执行权限。注入文字明确这是"可能倾向的提醒，不代表一定存在"，不要据此给对方下结论或矫枉过正。
 
-**默认值继承**：`<roomsDir>/.behavior-cards.json` 保存最近一次修改的 `{ enabled, cards }`。`POST /api/rooms/:id/settings` 带 `behaviorCards` 时、新建请求明确给出 `behaviorCards.enabled` 时写入；新建时未给出的部分由 `inheritBehaviorCards()` 从中补齐（API/命令行入口不传则沿用开关与卡片）。每场讨论保存自己的副本。`GET /api/behavior-cards` 返回 `{ defaults, presets, modelChoices }`：预设 `BEHAVIOR_PRESETS` 是常见长短处的起点（`kind` 只在界面显示，不发给模型），`modelChoices` 给编辑时点选的完整型号 ID。
+**默认值继承**：`<roomsDir>/.behavior-cards.json` 保存最近一次修改的 `{ enabled, cards }`。`POST /api/rooms/:id/settings` 带 `behaviorCards` 时、新建请求明确给出 `behaviorCards.enabled` 时写入；新建时未给出的部分由 `inheritBehaviorCards()` 从中补齐（API/命令行入口不传则沿用开关与卡片）。每场讨论保存自己的副本。`GET /api/behavior-cards` 返回 `{ defaults, presets, modelChoices }`：预设 `BEHAVIOR_PRESETS` 是常见长短处的起点（`note` 只在界面显示，不发给模型），`modelChoices` 给编辑时点选的完整型号 ID。
 
 复用 `POST /api/rooms/:id/settings` 的 `behaviorCards` 字段保存整套设置，语义变化时版本 +1。`#runTurn` 在调用前冻结本次 active 卡及型号，保存到模型消息的 `behaviorCards`；发言旁的版本标签和悬停提示使用此快照，避免把新设置套到旧发言上。初次启用、内容/生效型号变化时按签名注入更新块，停用或失配发送旧卡作废说明。行为卡不放入不可更新的系统提示，原质量规则仍只发一次。
 

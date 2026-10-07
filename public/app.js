@@ -696,7 +696,7 @@ function renderMsg(m) {
   if (m.phase === 'discussion' && m.from !== 'user' && m.round) tags.push(['', `第 ${m.round} 轮`]);
   if (m.model) tags.push(['', m.model]);
   if (m.behaviorCards?.cards?.length) tags.push(['', `行为卡 v${m.behaviorCards.version}`,
-    m.behaviorCards.cards.map((card) => `${card.title}（用户经验，尚未验证）\n触发：${card.trigger}\n动作：${card.action}`).join('\n\n')]);
+    m.behaviorCards.cards.map((card) => `${card.title}（用户经验，尚未验证）\n${card.text ?? `${card.trigger} ${card.action}`}`).join('\n\n')]);
   if (m.status === 'interrupted') tags.push(['bad', '被打断 · 未转发给对方']);
   if (m.status === 'failed') tags.push(['bad', '出错']);
 
@@ -777,6 +777,25 @@ function inline(s) {
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>');
 }
+const LIST_ITEM = /^(\s*)([-*+]|\d+[.)])\s+(.*)/;
+// 按缩进还原嵌套：更深的项挂到上一项里面，而不是并进同一层编号
+function listHtml(items) {
+  let k = 0;
+  function build() {
+    const { indent: base, ordered, num } = items[k];
+    const tag = ordered ? 'ol' : 'ul';
+    let html = `<${tag}${ordered && num > 1 ? ` start="${num}"` : ''}>`;
+    while (k < items.length && items[k].indent >= base) {
+      if (items[k].indent > base) html = `${html.replace(/<\/li>$/, '')}${build()}</li>`;
+      else if (items[k].ordered !== ordered) break; // 同一层换了列表类型，另起一个列表
+      else html += `<li>${inline(items[k++].text)}</li>`;
+    }
+    return `${html}</${tag}>`;
+  }
+  let out = '';
+  while (k < items.length) out += build();
+  return out;
+}
 function md(src) {
   const lines = src.replace(/\r/g, '').split('\n');
   const out = [];
@@ -796,16 +815,17 @@ function md(src) {
     if (h) { out.push(`<h${Math.min(h[1].length + 2, 6)}>${inline(h[2])}</h${Math.min(h[1].length + 2, 6)}>`); i++; continue; }
     if (/^【状态】/.test(line.trim())) { out.push(`<p class="status-line">${esc(line.trim())}</p>`); i++; continue; }
     if (/^【问用户】/.test(line.trim())) { out.push(`<p class="ask-user">${inline(line.trim())}</p>`); i++; continue; }
-    if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
-      const ordered = /^\s*\d+[.)]/.test(line);
+    if (LIST_ITEM.test(line)) {
+      // 整块收集：列表行、缩进续行，以及夹在列表项之间的空行（否则编号会从 1 重来）
       const items = [];
-      while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) {
-        items.push(lines[i].replace(/^\s*([-*+]|\d+[.)])\s+/, ''));
-        i++;
-        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i])) items[items.length - 1] += ' ' + lines[i++].trim();
+      while (i < lines.length) {
+        const m = lines[i].match(LIST_ITEM);
+        if (m) { items.push({ indent: m[1].replace(/\t/g, '    ').length, ordered: /\d/.test(m[2]), num: parseInt(m[2], 10), text: m[3] }); i++; continue; }
+        if (items.length && /^\s{2,}\S/.test(lines[i])) { items[items.length - 1].text += ' ' + lines[i++].trim(); continue; }
+        if (/^\s*$/.test(lines[i]) && LIST_ITEM.test(lines[i + 1] ?? '')) { i++; continue; }
+        break;
       }
-      const tag = ordered ? 'ol' : 'ul';
-      out.push(`<${tag}>${items.map((x) => `<li>${inline(x)}</li>`).join('')}</${tag}>`);
+      out.push(listHtml(items));
       continue;
     }
     if (/^>\s?/.test(line)) {
