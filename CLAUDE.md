@@ -1,4 +1,4 @@
-# 协作说明（Claude 与 Codex 共用）
+# 协作说明（Codex 与 Claude 共用）
 
 这个项目由 **Claude**（Claude Code）和 **Codex** 共同开发，用户是 Junjie Lai。
 `AGENTS.md`（Codex 读）和 `CLAUDE.md`（Claude 读）内容一致，改一份时同步另一份。

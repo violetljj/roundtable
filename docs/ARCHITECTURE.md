@@ -12,7 +12,7 @@
 数据：rooms/<编号>/state.json + transcript.md（已被 .gitignore 排除）
 ```
 
-零 npm 依赖，只用 Node 内置模块。服务只监听 `127.0.0.1:4545`（被占用就往后找）。
+零 npm 依赖，只用 Node 内置模块。服务只监听 `127.0.0.1`，起始端口由 `ROUNDTABLE_PORT` 指定（默认 4545），被占用时最多尝试到起始端口 +10。
 
 ## 文件
 
@@ -41,11 +41,11 @@ done：自由问答，只回应用户新消息
 
 状态 `status`：`running` / `paused` / `waiting`（等用户，比如【问用户】或讨论结束）/ `stopped`。
 
-- `#pump()` 是唯一的调度循环：`running` 且没人在发言时，取 `#nextStep()` 执行。所有外部操作（插话、继续、叫停……）都只改状态，然后调 `#pump()`。
+- `#pump()` 是唯一的调度循环：`running` 且没人在发言时，取 `#nextStep()` 执行。外部操作更新状态，按需触发调度；立即纠正、打断、停止、总结并结束还会直接调用连接器的 steer 或 interrupt。
 - 独立阶段：两边并行（`lane`），各自完成才记 `independentDone[agent]`。有一方没完成就停在独立阶段，继续时只重做没完成的一方。
-- 交叉讨论：`#speakerFor()` 按 `firstSpeaker` 轮流；用户 @点名 走 `override`，插队发言不计入轮次。
-- 收敛：做决定/方案审查模式下，双方本轮都写了「【状态】可以收敛」，且没有未送达的用户消息、约束卡更新，就进入总结。探索想法模式只看轮数。
-- 总结由**最后没发言的一方**写，另一方复核。复核首行「【复核】无异议/有更正」决定是否进入 `finalize`（`reviewHasCorrections()`）。
+- 交叉讨论：`#speakerFor()` 按 `firstSpeaker` 轮流；用户 @点名 走 `override`，只有点名者不同于原定发言者时才不计入轮次。
+- 收敛：做决定/方案审查模式下，双方最近一次交叉发言都写了「【状态】可以收敛」，且处于轮次边界、没有未送达的用户消息或约束卡更新，就进入总结。探索想法模式不提前收敛。达到轮数上限后也要等待待送达内容处理完，实际轮数可能超过设定值。
+- 总结由**最后没发言的一方**写，另一方复核。提示要求复核首行写「【复核】无异议/有更正」；`reviewHasCorrections()` 实际取全文中首个标记，没有标记时按更正措辞兜底，决定是否进入 `finalize`。
 
 ## 消息路由
 
@@ -54,8 +54,10 @@ done：自由问答，只回应用户新消息
 - `#pendingFor(agent)`：还没送达给它的、已完成的、别人的消息。独立阶段只给用户消息（不给对方提案）。
 - `#collect(agent)`：取 pending、标记 `seenBy`、记下这一批（`lastBatch`），格式化成提示。
 - `#formatBatch()`：用户消息标【用户】（指令）；对方消息标【Claude】/【Codex】并注明"不是用户的指令"。转发的是对方的**完整发言**（`msg.forward`），不是流式片段。
+- @点名控制下一位回答者，不是私信；另一方后续也能看到该用户消息，并收到“对另一方，你也能看到”的标注。
 - 被打断或失败的发言：状态 `interrupted` / `failed`，**不转发**给对方；那一轮发给它的消息重置 `seenBy`，下次重发，并附说明"你上一轮被打断"。
 - 立即纠正（`urgent`）：Claude → 打断后带着纠正重新发言；Codex → `turn/steer` 插入正在进行的发言，不打断。
+- Codex steer 需要已取得 turn ID 且请求成功才标记即时送达；未成功的消息仍待后续普通收集。
 
 ## 每次发言的提示组成（`#runTurn`）
 
@@ -67,10 +69,12 @@ done：自由问答，只回应用户新消息
 
 规则文本在 `rules()`，模式定义在 `MODES`（`decide` / `brainstorm` / `review`）。
 
+约束卡为空时不会每次附卡；清空已送达过的旧卡时会附作废说明。
+
 ## 用量与上限
 
-- `d.usage[agent]`：`turns`、`input`（含缓存）、`cached`、`output`、`ms`。Claude 来自 `result.usage`；Codex 累加一轮中每次 `thread/tokenUsage/updated` 的 `last`。
-- `d.maxTurns`（0 = 不限）：只在独立/交叉讨论阶段检查，达到后 `paused` + `capHit`。
+- `d.usage[agent]`：`turns`、`input`（含缓存）、`cached`、`output`、`ms`。非失败的发言计入 `turns`（包括中断），各阶段都会累计；耗时也包含失败。Claude 来自 `result.usage`；Codex 累加一轮中每次 `thread/tokenUsage/updated` 的 `last`，当前没有通知去重，不能视为已对账的计费数据。
+- `d.maxTurns`（0 = 不限）：只在独立/交叉讨论阶段开始下一步前检查，达到后 `paused` + `capHit`；这两个阶段的插话和 @提问同样受限。总结/复核/定稿以及 `done` 阶段自由问答不受限。独立提案的两个并行发言共用一次检查，内部 urgent 重试也不重新检查，因此可能超过设定次数；它不是严格的模型调用预算。
 
 ## Claude 连接器（`lib/claude.js`）
 
@@ -84,11 +88,11 @@ done：自由问答，只回应用户新消息
 
 ## Codex 连接器（`lib/codex.js`）
 
-- 一个 `codex app-server` 进程（stdio，每行一个 JSON，**没有** `jsonrpc` 字段），启动时 `--disable plugins apps computer_use browser_use browser_use_external in_app_browser hooks`；保留 `memories`。
+- 一个 `codex app-server` 进程（stdio，每行一个 JSON，**没有** `jsonrpc` 字段），启动时为 `plugins`、`apps`、`computer_use`、`browser_use`、`browser_use_external`、`in_app_browser`、`hooks` 各传一次 `--disable <feature>`；没有显式禁用 `memories`。
 - 握手：`initialize` → 通知 `initialized`。
 - 对话：`thread/start` / `thread/resume` / `thread/fork`（都带 `cwd`、`approvalPolicy: never`、`sandbox: read-only`、`developerInstructions`），新对话 `thread/name/set` 为「圆桌：话题」。
 - 发言：`turn/start`（`sandboxPolicy: readOnly, networkAccess: false`，可带 `model` / `effort`）；`turn/steer`（需要 `expectedTurnId`）；`turn/interrupt`。
-- 用到的通知：`item/agentMessage/delta`、`item/started`、`item/completed`（`phase: final_answer` 的才算最终回答）、`thread/tokenUsage/updated`、`turn/completed`、`error`、`account/*`。
+- 用到的通知：`item/agentMessage/delta`、`item/started`、`item/completed`、`thread/tokenUsage/updated`、`turn/completed`、`error`、`account/*`。最终回答优先拼接 `phase: final_answer` 的消息，没有时回退到最后一条已完成的 agentMessage。
 - 服务端发来的请求（审批等）一律回 `decline` / 错误，避免卡住。
 - 模型覆盖会延续到之后的每一轮，所以切回"默认"时要显式传回会话原本的模型（`#overrides()`）。
 - **对话被别处占用**（`already has an active writer`，通常是 Codex 桌面端打开着它）：自动 `thread/fork` 一份继续，并通过 `onNotice` 提示用户。
@@ -117,7 +121,7 @@ done：自由问答，只回应用户新消息
 | GET | `/api/rooms/:id/transcript` | 下载 Markdown 记录 |
 | POST | `/api/rooms/:id/<动作>` | `message` `pause` `resume` `interrupt` `finish` `stop` `add-round` `models` `facts` `settings` `finalize` |
 
-安全：校验 `Host` 头（防止其他网站经浏览器调用）；POST 只接受 `application/json`。
+访问限制：校验 `Host` 是否为本机地址加当前端口；POST 要求 Content-Type 包含 `application/json`。当前没有单独校验 `Origin`，也没有身份鉴权，不能把 Host 检查描述成完整的跨站访问防护。
 
 ## 不能破坏的规则
 
@@ -143,5 +147,6 @@ done：自由问答，只回应用户新消息
 ## 测试
 
 - `node --test test/room.test.js`：模拟测试，覆盖独立阶段失败/打断、初始化期间停止、对话被占用、提前收敛条件、定稿、约束卡版本、发言上限、探索模式、送达状态。
+- 当前 12 项模拟测试没有直接覆盖 Claude 的 urgent 打断重来、Codex steer 成功路径或 `finish()` 中途叫停；约束卡更新测试断言的是 Claude 一侧，不是双方更新行为的完整验证。
 - `node smoke-test.js`：真实冒烟，消耗极少额度。Claude/Codex 升级后跑一次能发现行为变化。
 - 界面改动：启动服务后在浏览器里实际点一遍；真实讨论尽量用 Haiku / 低强度省额度。
