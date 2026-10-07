@@ -22,7 +22,7 @@ export function initClaimBoard({ api, getCurrent, openSource }) {
   summary.append(heading, count);
   const list = node('div', 'claim-list');
   board.append(summary, list);
-  document.getElementById('timeline').before(board);
+  document.getElementById('claimBoardHost').appendChild(board);
 
   const dialog = node('dialog', 'claim-dialog');
   dialog.id = 'claimDialog';
@@ -67,6 +67,8 @@ export function initClaimBoard({ api, getCurrent, openSource }) {
     const el = document.getElementById('m-' + messageId);
     if (!el) return;
     if (dialog.open) dialog.close();
+    document.getElementById('roomToolsDialog').close();
+    document.getElementById('discussionTab').click();
     el.scrollIntoView({ block: 'center', behavior: 'smooth' });
     el.tabIndex = -1;
     el.focus({ preventScroll: true });

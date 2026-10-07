@@ -101,6 +101,7 @@ export function initExperiments({ api, getCurrent }) {
     if (room?.id !== roomId) return;
     button.classList.toggle('hidden', !roomId);
     button.textContent = state ? `小实验 · ${LABELS[state.status] ?? state.status}` : '小实验';
+    button.dataset.status = state?.status ?? '';
     q('.xp-topic').textContent = room?.state?.topic ?? '';
     q('.xp-status').textContent = loading ? '正在读取实验记录…' : creating ? '新实验草稿' : LABELS[state?.status] ?? '先写下分歧和判据';
     q('.xp-status').dataset.status = state?.status ?? '';

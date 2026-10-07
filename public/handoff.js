@@ -91,6 +91,7 @@ export function initHandoff({ api, getCurrent }) {
     if (room?.id !== roomId) return;
     button.classList.toggle('hidden', room?.state?.phase !== 'done' && !state);
     button.textContent = state && state.status !== 'draft' ? `执行交接 · ${LABELS[state.status] ?? state.status}` : '交给 AI 执行';
+    button.dataset.status = state?.status ?? '';
     q('.hf-topic').textContent = room.state?.topic ?? '';
     q('.hf-status').textContent = loading ? '正在读取任务卡…' : LABELS[state?.status] ?? '还没有可交接的完整讨论结论';
     q('.hf-status').dataset.status = state?.status ?? '';

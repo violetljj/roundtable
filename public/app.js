@@ -1,5 +1,6 @@
 'use strict';
 import { createRenderQueue } from './render-queue.js';
+import { initWorkspace } from './workspace-ui.js';
 
 const $ = (s) => document.querySelector(s);
 const NAMES = { claude: 'Claude', codex: 'Codex', user: '你', evidence: '实验记录' };
@@ -8,6 +9,7 @@ const LETTER = { claude: 'C', codex: 'X', user: '你', evidence: '验' };
 let current = null; // { id, state, msgs: Map }
 let es = null;
 let target = 'all';
+const workspaceUI = initWorkspace({ api, getCurrent: () => current, md });
 
 // 执行交接独立加载，避免给讨论消息渲染增加状态。
 const handoffUI = import('/handoff.js').then(({ initHandoff }) => initHandoff({ api, getCurrent: () => current }));
@@ -85,6 +87,13 @@ async function loadRooms() {
       li.querySelector('.t').textContent = r.topic;
       li.querySelector('.s').textContent = `${new Date(r.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${statusText(r)}`;
       li.onclick = () => { openRoom(r.id); toggleSidebar(false); };
+      li.tabIndex = 0;
+      li.setAttribute('role', 'button');
+      li.setAttribute('aria-label', `${r.topic}，${statusText(r)}`);
+      if (current?.id === r.id) li.setAttribute('aria-current', 'page');
+      li.onkeydown = (event) => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); li.click(); }
+      };
       ul.appendChild(li);
     }
   }
@@ -222,16 +231,18 @@ document.getElementById('accounts').addEventListener('click', async (e) => {
 });
 // 按钮放在折叠标题里：点它只刷新，不折叠面板
 $('#refreshStatus').onclick = (e) => { e.preventDefault(); e.stopPropagation(); loadStatus(true); };
-try { if (localStorage.getItem('roundtable:accounts') === 'closed') $('#accounts').open = false; } catch {}
+try { $('#accounts').open = localStorage.getItem('roundtable:accounts') === 'open'; } catch {}
 $('#accounts').addEventListener('toggle', () => {
   try { localStorage.setItem('roundtable:accounts', $('#accounts').open ? 'open' : 'closed'); } catch {}
 });
 
 // ---------- 模型选择 ----------
 let models = null;
+let modelsLoading = null;
 async function loadModels() {
   if (!models) {
-    models = await api('/api/models').catch(() => null);
+    modelsLoading ??= api('/api/models').catch(() => null).finally(() => { modelsLoading = null; });
+    models = await modelsLoading;
     const s = current?.state;
     if (models && s?.models) {
       $('#chipClaude').textContent = modelLabel('claude', s.models.claude);
@@ -279,7 +290,7 @@ async function renderPicker(container, value) {
 }
 
 function readPicker(container) {
-  const g = (k) => container.querySelector(`[data-k="${k}"]`)?.value ?? '';
+  const g = (k) => container.querySelector(`[data-k="${k}"]`)?.value ?? (k === 'claude.model' ? 'sonnet' : '');
   return { claude: { model: g('claude.model'), effort: g('claude.effort') }, codex: { model: g('codex.model'), effort: g('codex.effort') } };
 }
 
@@ -294,6 +305,7 @@ function openRoom(id) {
   es?.close();
   renderQueue.clear();
   current = { id, state: null, msgs: new Map() };
+  workspaceUI.reset();
   experimentUI.then((ui) => ui.sync(current));
   handoffUI.then((ui) => ui.sync(current));
   claimBoardUI.then((ui) => ui.sync(current));
@@ -332,6 +344,7 @@ function handleEvent(ev) {
     }
     case 'msg': {
       upsertMsg(ev.msg, true);
+      workspaceUI.sync();
       const roomId = current.id;
       notificationUI.then((ui) => { if (current?.id === roomId) ui.observeMessage(roomId, ev.msg); });
       break;
@@ -418,7 +431,7 @@ function setState(s) {
   notice.textContent = s.notice || '';
   notice.classList.toggle('hidden', !s.notice);
   // 讨论正常结束、等你提问这类提示用中性样式；暂停、出错、达到上限才用警示色
-  notice.classList.toggle('info', s.status === 'waiting' && s.phase === 'done');
+  notice.classList.toggle('info', ['waiting', 'done'].includes(s.status) && s.phase === 'done');
 
   const active = ['independent', 'discussion'].includes(s.phase);
   $('#pauseBtn').classList.toggle('hidden', s.status !== 'running');
@@ -428,13 +441,14 @@ function setState(s) {
   $('#finishBtn').classList.toggle('hidden', !active);
   $('#stopBtn').disabled = s.status === 'stopped' || (s.phase === 'done' && !s.speaking.length);
   updateHint();
+  workspaceUI.sync();
   if (!prev || prev.status !== s.status || prev.phase !== s.phase) loadRooms();
 }
 
 function updateHint() {
   const s = current?.state;
   const urgent = $('#urgentChk').checked;
-  let hint = '默认排在当前发言之后。Enter 发送，Shift+Enter 换行';
+  let hint = 'Enter 发送 · Shift+Enter 换行';
   if (urgent) hint = 'Claude 正在说的话会被打断并按你的纠正重来；Codex 不打断，直接把你的话插进去';
   else if (s && s.status !== 'running') hint = '发送后讨论会继续';
   if (target !== 'all') hint = `${NAMES[target]} 会优先回答你。` + hint;
@@ -609,8 +623,7 @@ function renderMsg(m) {
   if (m.from === 'user') el.querySelector('.bubble').insertAdjacentHTML('beforeend', deliveryHtml(m));
   if (['summary', 'review', 'final'].includes(m.kind) && m.status === 'complete') {
     const bubble = el.querySelector('.bubble');
-    bubble.insertAdjacentHTML('beforeend', `<button class="btn copy-btn" data-copy="${m.id}" title="有定稿时复制定稿，否则复制总结和复核更正，可以粘贴到 Claude 或 Codex 桌面端继续推进">复制讨论结论</button>`);
-    bubble.insertAdjacentHTML('beforeend', ' <button class="btn copy-btn" data-copy-brief title="复制最新已复核结论的三句话版">复制三句话</button>');
+    bubble.insertAdjacentHTML('beforeend', '<button class="btn copy-btn" data-open-result>查看最新结论</button>');
     // 已结束、复核有内容、还没有定稿：可以补一份定稿
     const hasFinal = [...current.msgs.values()].some((x) => x.kind === 'final' && x.status === 'complete');
     if (m.kind === 'review' && !hasFinal && current.state?.phase === 'done') {
@@ -746,10 +759,14 @@ function autosize() {
 
 async function openNewDialog() {
   $('#formError').textContent = '';
-  const picker = document.querySelector('[data-picker="new"]');
-  if (!picker.children.length) await renderPicker(picker);
+  toggleSidebar(false);
   $('#newDialog').showModal();
   $('#newForm').topic.focus();
+  const picker = document.querySelector('[data-picker="new"]');
+  if (!picker.children.length) {
+    picker.innerHTML = '<p class="fine">正在读取可选模型；直接开始将使用默认配置。</p>';
+    renderPicker(picker);
+  }
   loadProjects();
 }
 
@@ -820,6 +837,11 @@ async function openModelsDialog() {
 }
 $('#chipClaude').onclick = openModelsDialog;
 $('#chipCodex').onclick = openModelsDialog;
+$('#roomToolsDialog').addEventListener('click', (event) => {
+  if (event.target.closest('#factsChip, #usageChip, #chipClaude, #chipCodex, #experimentBtn, #handoffBtn')) {
+    $('#roomToolsDialog').close();
+  }
+}, { capture: true });
 $('#cancelModels').onclick = () => $('#modelsDialog').close();
 $('#modelsForm').addEventListener('submit', (e) => {
   e.preventDefault();
@@ -835,7 +857,18 @@ $('#fillExample').onclick = () => {
   const f = $('#newForm');
   f.topic.value = '为这个讨论室设计插话、暂停和恢复机制。';
   f.background.value = '双方先独立提出方案，再交换意见。我会中途修改一项要求，最后叫停。讨论室的代码就在当前项目文件夹里，可以先读 lib/room.js 了解现状。';
+  $('#contextOptions').open = true;
 };
+const MODE_DESCRIPTIONS = {
+  decide: '比较方案与代价，形成有依据的推荐。',
+  brainstorm: '从不同角度打开思路，组合值得尝试的想法。',
+  review: '检查已有方案，找出缺口、反例与改进方向。',
+  paper: '独立审稿，再整理作者回应与补充证据清单。',
+  learn: '一方讲解、一方追问，用例子和反例检验理解。',
+};
+$('#newForm').addEventListener('change', (event) => {
+  if (event.target.name === 'mode') $('#modeDescription').textContent = MODE_DESCRIPTIONS[event.target.value];
+});
 $('#newForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target;
@@ -857,6 +890,8 @@ $('#newForm').addEventListener('submit', async (e) => {
     const { id } = await api('/api/rooms', body);
     $('#newDialog').close();
     f.reset();
+    $('#modeDescription').textContent = MODE_DESCRIPTIONS.decide;
+    $('#contextOptions').open = $('#advancedOptions').open = false;
     openRoom(id);
   } catch (err) {
     $('#formError').textContent = err.message;
@@ -875,7 +910,10 @@ $('#targetSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (!b) return;
   target = b.dataset.target;
-  for (const x of $('#targetSeg').children) x.classList.toggle('on', x === b);
+  for (const x of $('#targetSeg').children) {
+    x.classList.toggle('on', x === b);
+    x.setAttribute('aria-pressed', String(x === b));
+  }
   updateHint();
 });
 $('#pauseBtn').onclick = () => action('pause');
@@ -904,61 +942,22 @@ $('#menuBtn').onclick = () => toggleSidebar();
 $('#menuBtn2').onclick = () => toggleSidebar();
 $('#scrim').onclick = () => toggleSidebar(false);
 $('#jumpSummaryBtn').onclick = () => {
+  $('#roomToolsDialog').close();
+  workspaceUI.showDiscussion();
   const el = [...document.querySelectorAll('.msg[data-kind="final"]')].pop() ?? [...document.querySelectorAll('.msg[data-kind="summary"]')].pop();
   el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 };
-// 讨论结论 = 总结 + 紧随其后的复核（更正或补充）。只复制总结会把复核里指出的错误继续传下去
-function conclusionText(clickedId) {
-  const msgs = [...current.msgs.values()];
-  const idx = msgs.findIndex((x) => x.id === clickedId);
-  const summaryIdx = msgs[idx]?.kind === 'summary' ? idx : msgs.slice(0, idx + 1).map((x) => x.kind).lastIndexOf('summary');
-  const summary = msgs[summaryIdx];
-  if (!summary) return null;
-  const review = msgs.slice(summaryIdx + 1).find((x) => x.kind === 'review' && x.status === 'complete');
-  const final = msgs.slice(summaryIdx + 1).find((x) => x.kind === 'final' && x.status === 'complete');
-  const name = (a) => NAMES[a] === '你' ? '用户' : NAMES[a];
-  const s = current.state;
-  // 有定稿就直接用定稿
-  if (final) {
-    return [`# 讨论结论：${s.topic}`, '',
-      `> 来自 Claude × Codex 圆桌讨论（项目：${s.cwd}）。${name(summary.from)} 写总结，${review ? name(review.from) + ' 复核，' : ''}${name(final.from)} 已把复核更正合并进本定稿。`, '',
-      final.text.trim(), ''].join('\n');
-  }
-  const parts = [`# 讨论结论：${s.topic}`, '', `> 来自 Claude × Codex 圆桌讨论（项目：${s.cwd}）。下面是 ${name(summary.from)} 写的总结和 ${review ? name(review.from) : '另一方'} 的复核；两者不一致时，以复核的更正为准。`, ''];
-  // 原文里的标题降一级，嵌在「总结」「复核」之下
-  const nest = (t) => t.trim().replace(/^(#{1,5})(\s)/gm, '#$1$2');
-  parts.push(`## 总结（${name(summary.from)} 撰写）`, '', nest(summary.text), '');
-  if (review) parts.push(`## 复核（${name(review.from)} 的更正与补充）`, '', nest(review.text), '');
-  else parts.push('## 复核', '', '（复核尚未完成）', '');
-  return parts.join('\n');
-}
-
-$('#timeline').addEventListener('click', async (e) => {
-  const shortButton = e.target.closest('[data-copy-brief]');
-  if (shortButton && current) {
-    const id = current.id;
-    try {
-      const result = await api(`/api/rooms/${encodeURIComponent(id)}/result`);
-      if (current?.id !== id) return;
-      if (!result.ready) throw new Error('结论尚未完成复核或更正');
-      if (!result.brief) throw new Error('这份旧结论没有三句话版');
-      await navigator.clipboard.writeText(result.brief);
-      shortButton.textContent = '✓ 已复制三句话';
-    } catch (error) { shortButton.textContent = error.message; }
-    setTimeout(() => { shortButton.textContent = '复制三句话'; }, 2500);
+// 复制集中在结论页，使用服务端已复核结果，避免复制未合并的旧总结。
+$('#timeline').addEventListener('click', (e) => {
+  if (e.target.closest('[data-open-result]')) {
+    $('#resultTab').click();
+    $('#resultTab').focus();
     return;
   }
   if (e.target.closest('[data-finalize]') && current) {
     e.target.closest('[data-finalize]').remove();
     api(`/api/rooms/${current.id}/finalize`, {}).catch((err) => alert(err.message));
-    return;
   }
-  const b = e.target.closest('[data-copy]');
-  if (!b || !current) return;
-  const text = conclusionText(b.dataset.copy);
-  if (!text) return;
-  try { await navigator.clipboard.writeText(text); b.textContent = '✓ 已复制总结和复核，可粘贴到桌面端'; } catch { b.textContent = '复制失败'; }
-  setTimeout(() => { b.textContent = '复制讨论结论'; }, 2500);
 });
 
 (async () => {

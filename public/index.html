@@ -6,6 +6,7 @@
 <title>圆桌讨论室</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%23D97757' stroke-width='4'/><circle cx='16' cy='16' r='5' fill='%2310A37F'/></svg>">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/workspace.css">
 </head>
 <body>
 <div class="scrim" id="scrim"></div>
@@ -21,7 +22,7 @@
     <button class="btn primary block" id="newRoomBtn">＋ 新建讨论</button>
     <div class="side-label">讨论记录</div>
     <ul class="room-list" id="roomList"></ul>
-    <details class="accounts" id="accounts" open>
+    <details class="accounts" id="accounts">
       <summary class="side-label row">账号与额度 <button class="link" id="refreshStatus" title="重新读取账号和额度">刷新</button></summary>
       <div class="acct claude" id="acctClaude"><div class="acct-head"><span class="dot sm claude">C</span><b>Claude</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
       <div class="acct codex" id="acctCodex"><div class="acct-head"><span class="dot sm codex">X</span><b>Codex</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
@@ -35,12 +36,13 @@
         <div class="trio">
           <span class="dot user">你</span><span class="dot claude">C</span><span class="dot codex">X</span>
         </div>
-        <h1>让 Claude 和 Codex 一起讨论</h1>
-        <p>你提出问题，它们先各自独立思考，再互相质疑、补充，最后整理出共识和分歧。过程中你随时可以插话、点名、打断或叫停。</p>
+        <div class="eyebrow">两个视角，一个更清晰的判断</div>
+        <h1>把问题放到圆桌上。</h1>
+        <p>Claude 与 Codex 独立思考、交叉讨论，与你一起把想法推向结论。</p>
         <ol class="steps">
-          <li><b>独立提案</b><span>互相看不到，避免被先说的一方带偏</span></li>
-          <li><b>交叉讨论</b><span>轮流回应，可以互相提问</span></li>
-          <li><b>总结与复核</b><span>一方总结、另一方纠错，得出定稿</span></li>
+          <li><b>提出问题</b><span>说清目标，选择讨论方式</span></li>
+          <li><b>一起讨论</b><span>独立提案，交叉回应，随时插话</span></li>
+          <li><b>带走结论</b><span>经过复核，再决定下一步</span></li>
         </ol>
         <button class="btn primary lg" id="emptyNewBtn">开始一场新讨论</button>
       </div>
@@ -48,16 +50,15 @@
 
     <section class="room hidden" id="roomView">
       <header class="room-head">
+        <div class="room-eyebrow"><span>圆桌工作室</span><span id="modePill" class="pill mode"></span></div>
         <div class="head-row">
           <button class="icon-btn menu-btn" id="menuBtn" title="讨论列表" aria-label="打开讨论列表">☰</button>
           <h2 class="room-title" id="roomTopic"></h2>
           <div class="controls">
-            <span class="speaking" id="speaking" aria-live="polite"></span>
             <button class="btn warn hidden" id="interruptBtn" title="立即停止当前发言，未完成的内容不会转给对方">打断</button>
             <button class="btn" id="pauseBtn" title="当前发言结束后，不再启动下一位">暂停</button>
             <button class="btn primary" id="resumeBtn" title="继续讨论">继续</button>
-            <button class="btn" id="finishBtn" title="停止讨论，让双方整理共识和分歧">总结并结束</button>
-            <button class="btn accent hidden" id="jumpSummaryBtn" title="跳到总结和复核（共识、分歧、更正、下一步）">看结论</button>
+            <button class="btn primary" id="finishBtn" title="停止讨论，让双方整理共识和分歧">整理结论</button>
             <div class="more">
               <button class="btn icon" id="moreBtn" title="更多操作" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">⋯</button>
               <div class="menu hidden" id="moreMenu" role="menu">
@@ -68,28 +69,47 @@
             </div>
           </div>
         </div>
-        <div class="room-meta">
-          <span class="pill phase" id="phasePill"></span>
-          <span class="pill mode" id="modePill"></span>
-          <span class="meta-sep" aria-hidden="true"></span>
-          <button class="chip facts" id="factsChip" title="查看或修改约束与事实卡"></button>
-          <button class="chip usage" id="usageChip" title="本场用量与上限设置"></button>
-          <button class="chip claude" id="chipClaude" title="点击切换 Claude 的模型和推理强度"></button>
-          <button class="chip codex" id="chipCodex" title="点击切换 Codex 的模型和推理强度"></button>
+        <div class="workflow-row">
+          <ol id="workflowSteps" class="workflow" aria-label="讨论进度">
+            <li data-step="independent"><span>01</span>独立提案</li>
+            <li data-step="discussion"><span>02</span>交叉讨论</li>
+            <li data-step="result"><span>03</span>总结与复核</li>
+          </ol>
+          <span class="speaking" id="speaking" aria-live="polite"></span>
         </div>
       </header>
+      <div class="workspace-nav">
+        <div class="view-tabs" role="tablist" aria-label="讨论视图">
+          <button id="discussionTab" role="tab" aria-controls="timeline" aria-selected="true">讨论过程</button>
+          <button id="resultTab" role="tab" aria-controls="resultView" aria-selected="false" tabindex="-1">结论</button>
+        </div>
+        <span class="phase-label" id="phasePill"></span>
+        <button class="btn ghost" id="roomToolsBtn" aria-haspopup="dialog">设置与工具<span class="tool-update">有进展</span></button>
+      </div>
       <div class="notice hidden" id="notice"></div>
 
-      <div class="timeline" id="timeline"></div>
+      <div class="timeline" id="timeline" role="tabpanel" aria-labelledby="discussionTab" tabindex="0"></div>
+      <section class="result-view hidden" id="resultView" role="tabpanel" aria-labelledby="resultTab" tabindex="0">
+        <div class="result-paper">
+          <div class="eyebrow">讨论成果</div>
+          <div class="result-heading"><h2>讨论结论</h2><span id="resultStatus" role="status"></span></div>
+          <div class="result-actions">
+            <button class="btn primary" id="resultCopyBrief" disabled>复制三句话</button>
+            <button class="btn" id="resultCopyFull" disabled>复制完整结论</button>
+            <button class="btn ghost" id="resultBackBtn">回到讨论，继续追问</button>
+          </div>
+          <div id="resultContent" class="body"></div>
+        </div>
+      </section>
 
       <footer class="composer">
         <div class="composer-card">
-          <textarea id="input" rows="2" aria-label="你的发言" placeholder="随时插话：补充要求、提问、纠正方向……"></textarea>
+          <textarea id="input" rows="2" aria-label="你的发言" placeholder="补充一个想法，或提出你的问题…"></textarea>
           <div class="composer-row">
             <div class="seg" id="targetSeg" role="group" aria-label="发给谁">
-              <button data-target="all" class="on">所有人</button>
-              <button data-target="claude">@Claude</button>
-              <button data-target="codex">@Codex</button>
+              <button data-target="all" class="on" aria-pressed="true">所有人</button>
+              <button data-target="claude" aria-pressed="false">@Claude</button>
+              <button data-target="codex" aria-pressed="false">@Codex</button>
             </div>
             <label class="urgent" title="打断正在发言的一方，让它马上按你的话调整（Codex 不打断，直接插入）">
               <input type="checkbox" id="urgentChk"><span>立即纠正</span>
@@ -103,29 +123,42 @@
   </main>
 </div>
 
-<dialog id="newDialog">
+<dialog id="roomToolsDialog" aria-labelledby="roomToolsTitle">
+  <div class="tools-head"><div><div class="eyebrow">按需使用，让讨论保持专注</div><h3 id="roomToolsTitle">设置与工具</h3></div><button class="icon-btn" id="closeRoomTools" aria-label="关闭设置与工具">×</button></div>
+  <section class="tool-section"><h4>上下文与核查</h4><p>校准共同前提，回到关键判断的依据。</p>
+    <div class="tool-buttons"><button class="btn" id="factsChip" title="查看或修改约束与事实卡">约束与事实卡</button><button class="btn" id="openClaimsBtn">主张与核查</button></div>
+    <div id="claimBoardHost"></div>
+  </section>
+  <section class="tool-section"><h4>推进下一步</h4><p>用实验检验分歧，或把结论交接为任务。</p>
+    <div class="tool-buttons" id="nextStepTools"><button class="btn hidden" id="jumpSummaryBtn">定位总结与复核</button></div>
+  </section>
+  <section class="tool-section"><h4>本场设置</h4><div class="tool-buttons"><button class="btn" id="chipClaude"></button><button class="btn" id="chipCodex"></button><button class="btn" id="usageChip"></button></div></section>
+</dialog>
+
+<dialog id="newDialog" aria-labelledby="newTitle">
   <form method="dialog" id="newForm">
-    <h3>新建讨论</h3>
-    <label>讨论主题 <span class="req">*</span>
-      <textarea name="topic" rows="3" required placeholder="例如：登录模块要不要拆成独立服务？"></textarea>
+    <div class="new-heading"><div class="eyebrow">从一个值得讨论的问题开始</div><h3 id="newTitle">开启一场圆桌</h3><p>先说清想解决什么，其余设置可以按需调整。</p></div>
+    <label class="topic-field">你想讨论什么？
+      <textarea name="topic" rows="3" required placeholder="描述你的问题、方案，或想做出的决定…"></textarea>
     </label>
     <button type="button" class="link" id="fillExample">填入示例话题</button>
-    <div class="mode-pick" role="radiogroup" aria-label="讨论模式">
-      <label><input type="radio" name="mode" value="decide" checked><b>做决定</b><span>比较少量方案，说清代价和选择条件，形成推荐</span></label>
-      <label><input type="radio" name="mode" value="brainstorm"><b>探索想法</b><span>各自提不同思路、交叉组合，不急于收敛</span></label>
-      <label><input type="radio" name="mode" value="review"><b>方案审查</b><span>审查你已有的方案，找缺口、反例和风险</span></label>
-      <label><input type="radio" name="mode" value="paper"><b>论文审稿</b><span>双方先独立审稿，再形成作者回应与补证据清单</span></label>
-      <label><input type="radio" name="mode" value="learn"><b>双人讲课</b><span>一方讲解、一方追问，用例子和反例检验理解</span></label>
-    </div>
-    <label>约束与事实卡（可选）
-      <textarea name="background" rows="4" placeholder="当前目标、必须遵守的约束、已经核实的事实……&#10;例：只做不需要新采集数据、一个人两周内能完成的事。"></textarea>
-      <span class="fine">固定附在双方每一次发言的开头，以它为准。讨论中可以随时修改，双方会收到"旧版本作废"的更新。</span>
-    </label>
+    <fieldset class="mode-field"><legend>希望怎样讨论</legend><div class="mode-pick">
+      <label><input type="radio" name="mode" value="decide" checked><b>做决定</b></label>
+      <label><input type="radio" name="mode" value="brainstorm"><b>探索想法</b></label>
+      <label><input type="radio" name="mode" value="review"><b>方案审查</b></label>
+      <label><input type="radio" name="mode" value="paper"><b>论文审稿</b></label>
+      <label><input type="radio" name="mode" value="learn"><b>双人讲课</b></label>
+    </div><p class="fine" id="modeDescription">比较方案与代价，形成有依据的推荐。</p></fieldset>
     <label>项目
       <select id="projectSelect" aria-label="选择项目"><option value="">加载中…</option></select>
     </label>
     <label class="hidden" id="cwdLabel">项目文件夹路径
       <input name="cwd" id="cwdInput" placeholder="E:\roundtable">
+    </label>
+    <details class="setup-section" id="contextOptions"><summary><span>补充上下文</span><small>约束、事实与已有对话</small></summary><div class="setup-body">
+    <label>约束与事实卡
+      <textarea name="background" rows="3" placeholder="目标、必须遵守的约束、已核实的事实…"></textarea>
+      <span class="fine">双方每次发言都会带上这张卡，讨论中可随时更新。</span>
     </label>
     <div class="ctx-line" id="ctxLine"></div>
     <div class="grid2">
@@ -136,7 +169,9 @@
         <select id="forkCodex" aria-label="带入 Codex 的已有对话"><option value="">不带入，新开对话</option></select>
       </label>
     </div>
-    <p class="fine">带入的是对话的一份副本：讨论室里的 Claude / Codex 会记得那次对话的内容，桌面端的原对话不受影响。</p>
+    <p class="fine">使用原对话的副本，不影响桌面端的原对话。</p>
+    </div></details>
+    <details class="setup-section" id="advancedOptions"><summary><span>讨论设置</span><small>模型、轮数与用量</small></summary><div class="setup-body">
     <div class="grid3">
       <label>讨论轮数
         <select name="maxRounds">
@@ -156,11 +191,12 @@
       </label>
     </div>
     <label class="opt-check"><input type="checkbox" name="claimCards">
-      <span>要求标注可核查主张<span class="fine">双方把关键判断写成【主张】【来源】【验证】，可在主张卡片里逐条标记和点名核查。格式要求会分散一部分注意力，需要逐条核实时再开。</span></span>
+      <span>要求标注可核查主张<span class="fine">将关键判断列为主张卡片，方便逐条核查。</span></span>
     </label>
     <div class="model-picker" data-picker="new"></div>
-    <p class="fine">讨论期间两边都是只读的：只能阅读和搜索文件，不能修改，也不能使用其他工具。</p>
+    </div></details>
     <div class="dialog-actions">
+      <span class="fine">讨论期间只读项目文件</span>
       <button type="button" class="btn ghost" id="cancelNew">取消</button>
       <button type="submit" class="btn primary" id="createBtn">开始讨论</button>
     </div>
