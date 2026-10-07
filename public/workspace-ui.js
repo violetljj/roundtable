@@ -31,7 +31,7 @@ export function initWorkspace({ api, getCurrent, md }) {
     const messages = [...(room.msgs?.values() ?? [])]
       .filter((message) => ['summary', 'review', 'final'].includes(message.kind)
         || message.from === 'evidence'
-        || (['claude', 'codex'].includes(message.from) && ['independent', 'discussion'].includes(message.phase)))
+        || (['claude', 'codex'].includes(message.from) && ['independent', 'discussion', 'done'].includes(message.phase)))
       .map((message) => [message.id, message.kind, message.status, message.status === 'complete' ? message.text : '']);
     return JSON.stringify([state.phase, state.status, state.speaking, state.notice, messages]);
   }
@@ -87,9 +87,26 @@ export function initWorkspace({ api, getCurrent, md }) {
       renderEmpty('结论尚未完成复核或更正', result?.notice || '回到讨论继续推进。完成复核后，最新结论会出现在这里。');
       return;
     }
-    status.textContent = '最新结论 · 已完成复核';
-    status.dataset.state = 'ready';
+    const since = result.newSince ?? 0;
+    status.textContent = since ? '已复核 · 之后又有新讨论' : '最新结论 · 已完成复核';
+    status.dataset.state = since ? 'stale' : 'ready';
     content.replaceChildren();
+    if (since) {
+      // 旧结论仍可读可复制，但要说清楚它没包含结束后的讨论
+      const note = document.createElement('div');
+      note.className = 'result-stale';
+      note.innerHTML = `<p>这份结论之后，双方又讨论了 ${since} 次，那些内容还没有纳入下面的结论。</p>`;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn sm primary';
+      btn.textContent = '更新结论';
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try { await api(`/api/rooms/${encodeURIComponent(roomId)}/resummarize`, {}); showDiscussion(); } catch (e) { btn.disabled = false; alert(e.message); }
+      };
+      note.appendChild(btn);
+      content.appendChild(note);
+    }
     const addSection = (title, text, className) => {
       const section = document.createElement('section');
       section.className = `result-section ${className}`;

@@ -313,6 +313,8 @@ const server = http.createServer(async (req, res) => {
         case 'finish': room.finish(); break;
         case 'stop': room.stop(); await room.experiment.dispose(); break;
         case 'add-round': room.addRound(); break;
+      case 'reopen': if (!room.reopen(body.rounds)) return send(res, 400, { error: '只有讨论已结束、没人在发言时才能重新打开' }); break;
+      case 'resummarize': if (!room.resummarize()) return send(res, 400, { error: '只有讨论已结束、没人在发言时才能更新结论' }); break;
         case 'models': room.updateModels(body); break;
         case 'facts': room.updateFacts(body.text); break;
         case 'settings': room.updateSettings(body); break;

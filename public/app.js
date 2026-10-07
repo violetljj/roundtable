@@ -463,6 +463,12 @@ function setState(s) {
   $('#addRoundBtn').disabled = !active;
   $('#finishBtn').classList.toggle('hidden', !active);
   $('#viewResultBtn').classList.toggle('hidden', !done || !!s.speaking.length);
+  // 结论之后又讨论过：旧结论没纳入这些内容，「更新结论」升为主操作
+  const since = done ? sinceConclusion() : 0;
+  $('#reopenBtn').classList.toggle('hidden', !done || !!s.speaking.length);
+  $('#resummarizeBtn').classList.toggle('hidden', !done || !!s.speaking.length || !hasConclusion());
+  $('#resummarizeBtn').classList.toggle('primary', since > 0);
+  $('#viewResultBtn').classList.toggle('primary', !since);
   $('#resultTab').classList.toggle('ready', done);
   $('#stopBtn').disabled = s.status === 'stopped' || (done && !s.speaking.length);
   updateHint();
@@ -470,11 +476,25 @@ function setState(s) {
   if (!prev || prev.status !== s.status || prev.phase !== s.phase) loadRooms();
 }
 
+// 最近一份总结/复核/定稿之后，双方又在自由问答里说了几次（与服务端 newSince 同口径）
+function lastConclusionIndex() {
+  const list = [...(current?.msgs.values() ?? [])];
+  for (let i = list.length - 1; i >= 0; i--) if (['review', 'final'].includes(list[i].kind) && list[i].status === 'complete') return { list, i };
+  return { list, i: -1 };
+}
+function hasConclusion() { return lastConclusionIndex().i >= 0; }
+function sinceConclusion() {
+  const { list, i } = lastConclusionIndex();
+  if (i < 0) return 0;
+  return list.slice(i + 1).filter((m) => ['claude', 'codex'].includes(m.from) && m.status === 'complete' && m.phase === 'done').length;
+}
+
 function updateHint() {
   const s = current?.state;
   const urgent = $('#urgentChk').checked;
   let hint = 'Enter 发送 · Shift+Enter 换行';
   if (urgent) hint = 'Claude 正在说的话会被打断并按你的纠正重来；Codex 不打断，直接把你的话插进去';
+  else if (s?.phase === 'done' && !s.speaking?.length) hint = '自由问答，不会改动结论';
   else if (s && s.status !== 'running') hint = '发送后讨论会继续';
   if (target !== 'all') hint = `${NAMES[target]} 会优先回答你。` + hint;
   $('#composerHint').textContent = hint;
@@ -607,9 +627,11 @@ function upsertMsg(m, live) {
   if (live && stick) scrollToBottom();
 }
 
-const PHASE_MARK = /^(第 0 轮|进入交叉讨论|.*进入总结|复核提出了更正|复核无异议|定稿完成|讨论结束)/;
+const PHASE_MARK = /^(第 0 轮|进入交叉讨论|.*进入总结|复核提出了更正|复核无异议|定稿完成|讨论结束|重新打开讨论|更新结论)/;
 function phaseLabel(text) {
   if (/^第 0 轮/.test(text)) return '独立提案';
+  if (/^重新打开讨论/.test(text)) return '结论之后 · 再讨论一轮';
+  if (/^更新结论/.test(text)) return '结论之后 · 重新总结';
   const m = text.match(/^进入交叉讨论，共 (\d+) 轮/);
   if (m) return `交叉讨论 · 共 ${m[1]} 轮`;
   if (/进入总结/.test(text)) return text.replace(/，?进入总结。?$/, '') ? `总结（${text.replace(/，?进入总结。?$/, '').replace(/。$/, '')}）` : '总结';
@@ -978,6 +1000,8 @@ $('#pauseBtn').onclick = () => action('pause');
 $('#resumeBtn').onclick = () => action('resume');
 $('#interruptBtn').onclick = () => action('interrupt');
 $('#addRoundBtn').onclick = () => action('add-round');
+$('#reopenBtn').onclick = () => action('reopen');
+$('#resummarizeBtn').onclick = () => action('resummarize');
 $('#finishBtn').onclick = () => action('finish');
 $('#stopBtn').onclick = () => { if (confirm('立即停止讨论，不做总结？')) action('stop'); };
 

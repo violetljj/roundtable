@@ -69,6 +69,10 @@ done：自由问答，只回应用户新消息
 - Codex steer 需要已取得 turn ID 且请求成功才标记即时送达；未成功的消息仍待后续普通收集。
 - steer 回执晚于原发言结束或打断时，也保留待送达；切入总结后，旧讨论发言的回执不能再改变轮次或暂停总结。
 
+## 结论之后继续
+
+`done` 阶段用户发消息走 `#freeTurn`（自由问答），不改结论。`conclusionFromRoom()` 返回 `newSince`：最近一份定稿（没有定稿时为复核）之后、`phase === 'done'` 的完整模型发言数；界面据此提示"尚未纳入结论"，空闲时的提示文案也按它区分。两条路回到正式流程：`reopen(rounds=1)` 从 `done` 回到 `discussion`，把 `maxRounds` 设到当前轮次往后 `rounds` 轮、清空收敛标记，讨论满轮后照常总结→复核（→定稿）；`resummarize()` 直接 `#enterSummary`。两者都只在 `done` 且无人发言时可用，接口 `POST /api/rooms/:id/reopen|resummarize`，小实验运行中同样被拦截。重开期间已有讨论消息在旧总结之后，旧结论按原规则不可交付，直到新的复核完成。
+
 ## 单实例
 
 同一个讨论记录目录只跑一份服务（`lib/instance-lock.js`）。两份会同时写 `rooms/`，后启动的一份还会按 `.codex-app-server.pid` 把前一份的 Codex app-server 当残留进程清理掉。启动时在创建 Codex 后台之前调用 `claimInstance`：`rooms/.server.json` 记着占用者 PID 和端口，占用者存活且 `/api/health` 应答就打开它并退出；刚启动还没写端口时最多等 15 秒；进程已不在或一直不应答（PID 被复用）按失效接管；锁文件用 `wx` 原子创建，同时启动只有一份成功。没有锁文件时还会在 4545–4555 里探测旧版服务。监听成功后写入实际端口，正常退出（含 Windows 关窗口的 SIGHUP）删除自己的锁；强杀留下的锁下次启动接管。`scripts/roundtable.js` 没给 `--url` 时读锁文件里的端口。

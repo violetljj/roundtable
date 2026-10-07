@@ -198,3 +198,41 @@ test('最后一位发言期间申请实验，发言结束后仍停在可实验�
   assert.equal(room.d.status, 'paused');
   assert.equal(room.speaking.size, 0);
 });
+
+test('结论之后的自由问答会被标为"尚未纳入"，更新结论后重新总结复核', async (t) => {
+  const { room, agents } = fixture(t, {}, '【复核】无异议');
+  room.start();
+  await waitFor(() => room.d.phase === 'done' && !room.pumping);
+  assert.equal(conclusionFromRoom(room.d).newSince, 0);
+  room.userMessage('新的校准结果出来了，请重新判断。');
+  await waitFor(() => room.d.status === 'waiting' && !room.pumping);
+  const stale = conclusionFromRoom(room.d);
+  assert.equal(stale.ready, true, '旧结论仍可查看');
+  assert.equal(stale.newSince, 2);
+  assert.match(room.d.notice, /还没纳入结论/);
+  const summaries = room.d.messages.filter((m) => m.kind === 'summary').length;
+  assert.equal(room.resummarize(), true);
+  await waitFor(() => room.d.phase === 'done' && !room.pumping);
+  assert.equal(room.d.messages.filter((m) => m.kind === 'summary').length, summaries + 1);
+  const fresh = conclusionFromRoom(room.d);
+  assert.equal(fresh.ready, true);
+  assert.equal(fresh.newSince, 0);
+  assert.equal(agents.claude.prompts.length + agents.codex.prompts.length, 4 + 2 + 2 + 2);
+});
+
+test('结论之后再讨论一轮：双方各发言一次，再重新总结复核；进行中旧结论不可交付', async (t) => {
+  const { room } = fixture(t, {}, '【复核】无异议');
+  room.start();
+  await waitFor(() => room.d.phase === 'done' && !room.pumping);
+  const before = room.d.messages.length;
+  assert.equal(room.reopen(), true);
+  assert.equal(room.d.phase, 'discussion');
+  assert.equal(conclusionFromRoom(room.d).ready, false);
+  await waitFor(() => room.d.phase === 'done' && !room.pumping);
+  const added = room.d.messages.slice(before).filter((m) => ['claude', 'codex'].includes(m.from));
+  assert.deepEqual(added.map((m) => m.phase), ['discussion', 'discussion', 'summary', 'review']);
+  assert.equal(conclusionFromRoom(room.d).ready, true);
+  assert.equal(room.reopen(), true);
+  room.stop();
+  assert.equal(room.resummarize(), false, '只有结束状态才能更新结论');
+});
