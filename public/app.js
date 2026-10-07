@@ -10,6 +10,20 @@ let target = 'all';
 
 // 执行交接独立加载，避免给讨论消息渲染增加状态。
 const handoffUI = import('/handoff.js').then(({ initHandoff }) => initHandoff({ api, getCurrent: () => current }));
+const claimBoardUI = Promise.all([import('/claim-board.js'), import('/source-preview.js')]).then(([{ initClaimBoard }, { initSourcePreview }]) => {
+  const ui = initClaimBoard({ api, getCurrent: () => current, openSource: initSourcePreview({ api, getCurrent: () => current }) });
+  ui.sync(current);
+  for (const m of current?.msgs.values() ?? []) {
+    const el = document.getElementById('m-' + m.id);
+    if (el) ui.decorateMessage(m, el);
+  }
+  return ui;
+});
+const notificationUI = import('/notifications.js').then(({ initNotifications }) => {
+  const ui = initNotifications({ openRoom });
+  if (current?.state) ui.observe(current.id, null, { ...current.state, messages: [...current.msgs.values()] });
+  return ui;
+});
 
 // ---------- API ----------
 async function api(path, body) {
@@ -252,6 +266,7 @@ function openRoom(id) {
   es?.close();
   current = { id, state: null, msgs: new Map() };
   handoffUI.then((ui) => ui.sync(current));
+  claimBoardUI.then((ui) => ui.sync(current));
   try { localStorage.setItem('roundtable:last', id); } catch {}
   $('#emptyState').classList.add('hidden');
   $('#menuBtn2').classList.add('hidden');
@@ -275,13 +290,20 @@ function handleEvent(ev) {
       for (const m of messages) current.msgs.set(m.id, m);
       for (const m of messages) upsertMsg(m, false);
       current.state = null;
+      const roomId = current.id;
+      notificationUI.then((ui) => { if (current?.id === roomId) ui.observe(roomId, null, ev.room); });
       setState(state);
       // 重连可能错过交接完成事件，重新读取独立状态；保留未保存的任务卡编辑。
       handoffUI.then((ui) => ui.refresh());
       scrollToBottom(true);
       break;
     }
-    case 'msg': upsertMsg(ev.msg, true); break;
+    case 'msg': {
+      upsertMsg(ev.msg, true);
+      const roomId = current.id;
+      notificationUI.then((ui) => { if (current?.id === roomId) ui.observeMessage(roomId, ev.msg); });
+      break;
+    }
     case 'delta': {
       const m = current.msgs.get(ev.id);
       if (!m) return;
@@ -312,6 +334,9 @@ function setState(s) {
   const prev = current.state;
   current.state = s;
   handoffUI.then((ui) => ui.sync(current));
+  const roomId = current.id;
+  claimBoardUI.then((ui) => { if (current?.id === roomId) ui.sync(current); });
+  notificationUI.then((ui) => { if (current?.id === roomId) ui.observe(roomId, prev, s); });
   $('#roomTopic').textContent = s.topic;
   $('#roomTopic').title = s.topic;
   document.title = `${s.topic} · 圆桌讨论室`;
@@ -557,6 +582,10 @@ function renderMsg(m) {
       shown.map((a) => `<div class="act">› ${esc(a)}</div>`).join('');
     el.querySelector('.bubble').appendChild(acts);
   }
+  const roomId = current.id;
+  claimBoardUI.then((ui) => {
+    if (current?.id === roomId && el.isConnected && document.getElementById('m-' + m.id) === el) ui.decorateMessage(current.msgs.get(m.id) ?? m, el);
+  });
 }
 
 function nearBottom() {

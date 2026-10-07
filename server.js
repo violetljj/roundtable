@@ -10,6 +10,7 @@ import { Room } from './lib/room.js';
 import { listProjects, listClaudeSessions, projectContext } from './lib/desktop.js';
 import { Handoff } from './lib/handoff.js';
 import { createExecutionAgentFactory } from './lib/execution-agents.js';
+import { previewSource } from './lib/source-reference.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ROOMS_DIR = process.env.ROUNDTABLE_ROOMS_DIR ? path.resolve(process.env.ROUNDTABLE_ROOMS_DIR) : path.join(ROOT, 'rooms');
@@ -189,6 +190,21 @@ const server = http.createServer(async (req, res) => {
     if (parts[1] === 'rooms' && !room) return send(res, 404, { error: '讨论室不存在' });
 
     if (room && req.method === 'GET' && parts.length === 3) return send(res, 200, room.snapshot());
+
+    if (room && req.method === 'GET' && parts.length === 4 && parts[3] === 'source') {
+      try { return send(res, 200, previewSource(room.d.cwd, url.searchParams.get('reference'))); }
+      catch (e) { return send(res, 400, { error: e.message }); }
+    }
+
+    if (room && req.method === 'POST' && parts.length === 4 && ['claims', 'check'].includes(parts[3])) {
+      if (req.headers.origin && req.headers.origin !== `http://${host}`) return send(res, 403, { error: '只允许从讨论室页面操作核查清单' });
+      const body = await readJson(req);
+      try {
+        if (parts[3] === 'claims') room.updateClaim(body);
+        else room.checkClaim(body);
+        return send(res, 200, { ok: true });
+      } catch (e) { return send(res, 400, { error: e.message }); }
+    }
 
     if (room && parts[3] === 'handoff') {
       if (req.method === 'GET' && parts.length === 4) return send(res, 200, room.handoff.snapshot());

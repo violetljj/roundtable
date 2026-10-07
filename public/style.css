@@ -416,6 +416,8 @@ dialog::backdrop { background: rgba(20, 18, 15, .38); backdrop-filter: blur(2px)
   .room-head { padding: 10px 16px 8px; }
   .timeline { padding: 16px 12px 8px; }
   .composer { padding: 4px 12px 12px; }
+  .composer-row { flex-wrap: wrap; }
+  .composer-row .send { margin-left: auto; }
   .pair { grid-template-columns: 1fr; }
   .grid2, .grid3, .mode-pick, .steps { grid-template-columns: 1fr; }
   .mp-row { grid-template-columns: 1fr 1fr; }

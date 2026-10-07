@@ -10,6 +10,7 @@
 1. 读 `docs/DEVLOG.md` **最后几条**，了解对方刚做了什么、还有什么没收尾。
 2. 读 `docs/ARCHITECTURE.md` 里和这次改动相关的部分，尤其是「不能破坏的规则」。
 3. 运行 `git status`。如果有不是你改的未提交改动，那是对方（或用户）正在进行的工作：**不要覆盖、回退或顺手整理它们**；要改同一个文件时先问用户。
+4. 修改前用 `node scripts/claims.js list` 查看认领，再用 `claim --owner <你的任务名> --task "任务说明" --minutes 60 <文件...>` 原子认领本次文件，保存返回的 token。完成、取消或交接时按 owner 和 token 释放；超过预计时间只提示可能失联，不自动抢占。认领不能替代第 3 条，也不能阻止绕过工具编辑。完整命令见 [docs/FILE_CLAIMS.md](docs/FILE_CLAIMS.md)。
 
 ## 完成一项工作后
 

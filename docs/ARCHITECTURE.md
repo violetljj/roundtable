@@ -123,6 +123,18 @@ done：自由问答，只回应用户新消息
 
 `ROUNDTABLE_ROOMS_DIR` 可指定独立记录目录，用于本地验收时隔离数据和讨论 app-server PID 文件；正常启动仍使用项目内 `rooms/`。
 
+## 主张与核查
+
+`lib/claim-board.js` 从完整 Claude/Codex 发言的 `forward`（缺失则 `text`）按行提取 `【主张】`、`【来源】`、`【验证】`，忽略代码围栏、引用及失败/中断/流式消息。卡片 ID 为消息 ID 加主张序号；`snapshot().claims` 随原状态事件传送，旧记录也能派生，不额外调用模型。普通发言每轮附输出协议，总结/复核/定稿保持既有格式。
+
+用户标注存于 `d.claimAnnotations`：`discussion`（unresolved/consensus/disputed）、`evidence`（unverified/supported/counter）、`note`。标注不修改原始发言，也不自动升级证据或同步成模型观点。`checkClaim` 通过既有 `userMessage` 点名另一方，创建时持久化 `relatedMessageId`/`claimId`，引用明确为同伴材料而非用户指令。独立阶段拒绝核查，其他阶段继续沿用计轮、上限和总结调度。
+
+`public/claim-board.js` 独立管理清单、草稿和详情；异步响应绑定讨论 ID。`lib/source-reference.js` 为项目内非链接 UTF-8 文本提供最多 1 MiB 文件的局部当前内容预览，返回 SHA-256、读取时间和修改时间；这不是历史快照或真实工具读取审计。`public/source-preview.js` 显式提示当前版本与原引用可能不同。
+
+`public/notifications.js` 仅观察当前打开讨论的 SSE 状态/消息；用户点击才请求浏览器通知权限。首次/重连快照静默，实时等待用户、完成、失败、发言上限发通知；手动暂停/停止不发。通知点击聚焦并打开对应讨论，localStorage 有界记录事件尽力跨标签去重，不是后台推送服务。
+
+开发认领工具为 `lib/file-claims.js` 和 `scripts/claims.js`，Git common dir 下 `roundtable-claims` 跨 worktree 共享，原子写锁串行事务；到期不抢占。详见 [FILE_CLAIMS.md](FILE_CLAIMS.md)。
+
 ## HTTP API（`server.js`）
 
 | 方法 | 路径 | 说明 |
@@ -137,11 +149,14 @@ done：自由问答，只回应用户新消息
 | GET | `/api/rooms/:id` | 完整状态 |
 | GET | `/api/rooms/:id/events` | SSE：`snapshot` / `msg` / `delta` / `activity` / `state` |
 | GET | `/api/rooms/:id/transcript` | 下载 Markdown 记录 |
+| GET | `/api/rooms/:id/source?reference=文件:行号` | 当前项目文件只读预览与内容哈希 |
+| POST | `/api/rooms/:id/claims` | 保存指定主张的用户标注 |
+| POST | `/api/rooms/:id/check` | 对完整发言或主张发起定向核查 |
 | POST | `/api/rooms/:id/<动作>` | `message` `pause` `resume` `interrupt` `finish` `stop` `add-round` `models` `facts` `settings` `finalize` |
 | GET | `/api/rooms/:id/handoff` | 执行交接状态；已完成结论生成可编辑草稿，否则 null |
 | POST | `/api/rooms/:id/handoff/<动作>` | `card`（支持 regenerate）、`start`、`cancel`、`merge`、`discard` |
 
-访问限制：校验 `Host` 是否为本机地址加当前端口；POST 要求 Content-Type 包含 `application/json`。新增的交接写入接口另校验网页 Origin 与 Host 同源；其他接口仍没有单独校验 Origin。没有身份鉴权，不能把 Host 检查描述成完整的跨站访问防护。
+访问限制：校验 `Host` 是否为本机地址加当前端口；POST 要求 Content-Type 包含 `application/json`。交接、主张标注与定向核查写入接口另校验网页 Origin 与 Host 同源；其他接口仍没有单独校验 Origin。没有身份鉴权，不能把 Host 检查描述成完整的跨站访问防护。
 
 ## 不能破坏的规则
 
@@ -171,6 +186,6 @@ done：自由问答，只回应用户新消息
 - 当前 24 项讨论模拟测试直接覆盖 Claude urgent 两阶段重来、Codex steer 成功/失败/迟到及重送、finish 两阶段与旧回执竞争、双方约束卡更新/清空。
 - `node --test test/handoff.test.js`：临时真实 Git 仓库配模拟执行器，覆盖全生命周期、源目录保护、漂移、取消/超时/重启、明确提交确认、忽略文件碰撞、hooks 禁用和清理。
 - `node --test test/execution-agents.test.js`：只读默认、写入沙盒参数、受限文本落盘与路径/链接拒绝、取消和自有进程释放。
-- `npm test` 运行上述三组，不调用真实模型。
+- `npm test` 运行上述测试及 claim-board、file-claims、source-reference、notifications 四组，不调用真实模型。
 - `node smoke-test.js`：真实冒烟，消耗极少额度。Claude/Codex 升级后跑一次能发现行为变化。
 - 界面改动：启动服务后在浏览器里实际点一遍；真实讨论尽量用 Haiku / 低强度省额度。

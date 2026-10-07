@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js --open",
     "smoke": "node smoke-test.js",
-    "test": "node --test test/room.test.js test/handoff.test.js test/execution-agents.test.js"
+    "test": "node --test test/room.test.js test/handoff.test.js test/execution-agents.test.js test/claim-board.test.js test/file-claims.test.js test/source-reference.test.js test/notifications.test.js",
+    "claims": "node scripts/claims.js"
   },
   "engines": {
     "node": ">=20"
