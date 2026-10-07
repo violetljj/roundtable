@@ -238,15 +238,8 @@ export function initWorkspace({ api, getCurrent, md }) {
   }
   byId('roomToolsBtn').onclick = () => { mountClaims(); toolsDialog.showModal(); };
   byId('closeRoomTools').onclick = () => toolsDialog.close();
-  byId('openClaimsBtn').onclick = () => {
-    const board = mountClaims();
-    if (!toolsDialog.open) toolsDialog.showModal();
-    if (board) {
-      board.open = true;
-      board.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      board.querySelector('summary')?.focus({ preventScroll: true });
-    }
-  };
+  // 抽屉式面板：点遮罩处关闭
+  toolsDialog.addEventListener('click', (event) => { if (event.target === toolsDialog) toolsDialog.close(); });
 
   reset();
   return { reset, sync, showDiscussion };

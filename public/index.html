@@ -6,7 +6,6 @@
 <title>圆桌讨论室</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%23D97757' stroke-width='4'/><circle cx='16' cy='16' r='5' fill='%2310A37F'/></svg>">
 <link rel="stylesheet" href="/style.css">
-<link rel="stylesheet" href="/workspace.css">
 </head>
 <body>
 <div class="scrim" id="scrim"></div>
@@ -19,14 +18,15 @@
         <div class="brand-sub">Claude × Codex</div>
       </div>
     </div>
-    <button class="btn primary block" id="newRoomBtn">＋ 新建讨论</button>
-    <div class="side-label">讨论记录</div>
-    <ul class="room-list" id="roomList"></ul>
-    <details class="accounts" id="accounts">
-      <summary class="side-label row">账号与额度 <button class="link" id="refreshStatus" title="重新读取账号和额度">刷新</button></summary>
-      <div class="acct claude" id="acctClaude"><div class="acct-head"><span class="dot sm claude">C</span><b>Claude</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
-      <div class="acct codex" id="acctCodex"><div class="acct-head"><span class="dot sm codex">X</span><b>Codex</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
-    </details>
+    <button class="btn block new-room" id="newRoomBtn"><span aria-hidden="true">＋</span> 新建讨论</button>
+    <ul class="room-list" id="roomList" aria-label="讨论记录"></ul>
+    <div class="side-foot">
+      <details class="accounts" id="accounts">
+        <summary>账号与额度 <button class="link" id="refreshStatus" title="重新读取账号和额度">刷新</button></summary>
+        <div class="acct claude" id="acctClaude"><div class="acct-head"><span class="dot sm claude">C</span><b>Claude</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
+        <div class="acct codex" id="acctCodex"><div class="acct-head"><span class="dot sm codex">X</span><b>Codex</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
+      </details>
+    </div>
   </aside>
 
   <main class="main">
@@ -50,17 +50,13 @@
 
     <section class="room hidden" id="roomView">
       <header class="room-head">
-        <div class="room-eyebrow"><span>圆桌工作室</span><span id="modePill" class="pill mode"></span></div>
         <div class="head-row">
           <button class="icon-btn menu-btn" id="menuBtn" title="讨论列表" aria-label="打开讨论列表">☰</button>
           <h2 class="room-title" id="roomTopic"></h2>
-          <div class="controls">
-            <button class="btn warn hidden" id="interruptBtn" title="立即停止当前发言，未完成的内容不会转给对方">打断</button>
-            <button class="btn" id="pauseBtn" title="当前发言结束后，不再启动下一位">暂停</button>
-            <button class="btn primary" id="resumeBtn" title="继续讨论">继续</button>
-            <button class="btn primary" id="finishBtn" title="停止讨论，让双方整理共识和分歧">整理结论</button>
+          <div class="head-actions">
+            <button class="btn ghost" id="roomToolsBtn" aria-haspopup="dialog" title="约束卡、模型、用量、核查与后续工具"><span class="tl">本场</span>设置<span class="tool-update">有进展</span></button>
             <div class="more">
-              <button class="btn icon" id="moreBtn" title="更多操作" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">⋯</button>
+              <button class="btn icon ghost" id="moreBtn" title="更多操作" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">⋯</button>
               <div class="menu hidden" id="moreMenu" role="menu">
                 <button id="addRoundBtn" role="menuitem" title="讨论轮数上限 +1">再加一轮</button>
                 <a id="exportBtn" role="menuitem" title="下载完整记录（Markdown）">导出完整记录</a>
@@ -69,40 +65,50 @@
             </div>
           </div>
         </div>
-        <div class="workflow-row">
+        <div class="sub-row">
+          <span id="modePill" class="pill mode"></span>
           <ol id="workflowSteps" class="workflow" aria-label="讨论进度">
-            <li data-step="independent"><span>01</span>独立提案</li>
-            <li data-step="discussion"><span>02</span>交叉讨论</li>
-            <li data-step="result"><span>03</span>总结与复核</li>
+            <li data-step="independent">独立提案</li>
+            <li data-step="discussion">交叉讨论</li>
+            <li data-step="result">总结与复核</li>
           </ol>
-          <span class="speaking" id="speaking" aria-live="polite"></span>
+          <div class="view-tabs" role="tablist" aria-label="讨论视图">
+            <button id="discussionTab" role="tab" aria-controls="timeline" aria-selected="true">讨论</button>
+            <button id="resultTab" role="tab" aria-controls="resultView" aria-selected="false" tabindex="-1">结论</button>
+          </div>
         </div>
       </header>
-      <div class="workspace-nav">
-        <div class="view-tabs" role="tablist" aria-label="讨论视图">
-          <button id="discussionTab" role="tab" aria-controls="timeline" aria-selected="true">讨论过程</button>
-          <button id="resultTab" role="tab" aria-controls="resultView" aria-selected="false" tabindex="-1">结论</button>
-        </div>
-        <span class="phase-label" id="phasePill"></span>
-        <button class="btn ghost" id="roomToolsBtn" aria-haspopup="dialog">设置与工具<span class="tool-update">有进展</span></button>
-      </div>
-      <div class="notice hidden" id="notice"></div>
 
       <div class="timeline" id="timeline" role="tabpanel" aria-labelledby="discussionTab" tabindex="0"></div>
       <section class="result-view hidden" id="resultView" role="tabpanel" aria-labelledby="resultTab" tabindex="0">
         <div class="result-paper">
-          <div class="eyebrow">讨论成果</div>
           <div class="result-heading"><h2>讨论结论</h2><span id="resultStatus" role="status"></span></div>
           <div class="result-actions">
             <button class="btn primary" id="resultCopyBrief" disabled>复制三句话</button>
             <button class="btn" id="resultCopyFull" disabled>复制完整结论</button>
-            <button class="btn ghost" id="resultBackBtn">回到讨论，继续追问</button>
+            <button class="btn ghost" id="resultBackBtn">回到讨论继续追问</button>
           </div>
           <div id="resultContent" class="body"></div>
         </div>
       </section>
 
       <footer class="composer">
+        <!-- 状态与控制放在输入框上方：看到"现在怎样"的同时就能操作 -->
+        <div class="dock" id="statusDock">
+          <div class="dock-status">
+            <span class="dock-dot" aria-hidden="true"></span>
+            <span class="speaking" id="speaking" aria-live="polite"></span>
+            <span class="notice hidden" id="notice"></span>
+            <span class="phase-label" id="phasePill"></span>
+          </div>
+          <div class="dock-actions">
+            <button class="btn sm warn hidden" id="interruptBtn" title="立即停止当前发言，未完成的内容不会转给对方">打断</button>
+            <button class="btn sm" id="pauseBtn" title="当前发言结束后，不再启动下一位">暂停</button>
+            <button class="btn sm primary" id="resumeBtn" title="继续讨论">继续</button>
+            <button class="btn sm" id="finishBtn" title="停止讨论，让双方整理共识和分歧">整理结论</button>
+            <button class="btn sm primary hidden" id="viewResultBtn">查看结论</button>
+          </div>
+        </div>
         <div class="composer-card">
           <textarea id="input" rows="2" aria-label="你的发言" placeholder="补充一个想法，或提出你的问题…"></textarea>
           <div class="composer-row">
@@ -123,16 +129,32 @@
   </main>
 </div>
 
-<dialog id="roomToolsDialog" aria-labelledby="roomToolsTitle">
-  <div class="tools-head"><div><div class="eyebrow">按需使用，让讨论保持专注</div><h3 id="roomToolsTitle">设置与工具</h3></div><button class="icon-btn" id="closeRoomTools" aria-label="关闭设置与工具">×</button></div>
-  <section class="tool-section"><h4>上下文与核查</h4><p>校准共同前提，回到关键判断的依据。</p>
-    <div class="tool-buttons"><button class="btn" id="factsChip" title="查看或修改约束与事实卡">约束与事实卡</button><button class="btn" id="openClaimsBtn">主张与核查</button></div>
-    <div id="claimBoardHost"></div>
-  </section>
-  <section class="tool-section"><h4>推进下一步</h4><p>用实验检验分歧，或把结论交接为任务。</p>
-    <div class="tool-buttons" id="nextStepTools"><button class="btn hidden" id="jumpSummaryBtn">定位总结与复核</button></div>
-  </section>
-  <section class="tool-section"><h4>本场设置</h4><div class="tool-buttons"><button class="btn" id="chipClaude"></button><button class="btn" id="chipCodex"></button><button class="btn" id="usageChip"></button></div></section>
+<dialog id="roomToolsDialog" class="drawer" aria-labelledby="roomToolsTitle">
+  <div class="drawer-head"><h3 id="roomToolsTitle">本场设置</h3><button class="icon-btn" id="closeRoomTools" aria-label="关闭本场设置">×</button></div>
+  <div class="drawer-body">
+    <section class="tool-section">
+      <div class="ts-head"><h4>约束与事实卡</h4><button class="link" id="factsChip" title="查看或修改约束与事实卡">编辑</button></div>
+      <p class="facts-preview" id="factsPreview"></p>
+    </section>
+    <section class="tool-section">
+      <div class="ts-head"><h4>模型</h4><span class="ts-note">下一次发言生效</span></div>
+      <button class="tool-row" id="chipClaude"></button>
+      <button class="tool-row" id="chipCodex"></button>
+    </section>
+    <section class="tool-section">
+      <div class="ts-head"><h4>用量与上限</h4></div>
+      <button class="tool-row" id="usageChip"></button>
+    </section>
+    <section class="tool-section">
+      <div class="ts-head"><h4>主张与核查</h4></div>
+      <div id="claimBoardHost"></div>
+    </section>
+    <section class="tool-section">
+      <div class="ts-head"><h4>推进下一步</h4></div>
+      <p class="ts-desc">用小实验检验分歧，或把结论交给一方执行。</p>
+      <div class="tool-buttons" id="nextStepTools"><button class="btn hidden" id="jumpSummaryBtn">定位总结与复核</button></div>
+    </section>
+  </div>
 </dialog>
 
 <dialog id="newDialog" aria-labelledby="newTitle">

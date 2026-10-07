@@ -99,17 +99,17 @@ export function initNotifications({ openRoom, window: win = globalThis.window, d
   const active = new Set();
   const panel = doc.createElement('div');
   panel.id = 'desktopNotifications';
-  panel.style.cssText = 'padding:10px 16px;border-top:1px solid var(--line);flex-shrink:0';
+  panel.className = 'notify';
   const button = doc.createElement('button');
-  button.className = 'btn block';
+  button.className = 'notify-btn';
   button.type = 'button';
   const hint = doc.createElement('div');
-  hint.className = 'sub';
-  hint.style.cssText = 'font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5';
+  hint.className = 'notify-hint';
   hint.setAttribute('aria-live', 'polite');
   panel.append(button, hint);
   const sidebar = doc.getElementById('sidebar');
-  if (sidebar) sidebar.insertBefore(panel, doc.getElementById('accounts'));
+  const accounts = doc.getElementById('accounts');
+  if (sidebar) (accounts?.parentNode ?? sidebar).insertBefore(panel, accounts);
 
   function render(problem = '') {
     const permission = supported ? NotificationAPI.permission : 'unavailable';

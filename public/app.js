@@ -244,10 +244,7 @@ async function loadModels() {
     modelsLoading ??= api('/api/models').catch(() => null).finally(() => { modelsLoading = null; });
     models = await modelsLoading;
     const s = current?.state;
-    if (models && s?.models) {
-      $('#chipClaude').textContent = modelLabel('claude', s.models.claude);
-      $('#chipCodex').textContent = modelLabel('codex', s.models.codex);
-    }
+    if (models && s?.models) renderModelRows(s.models);
   }
   return models;
 }
@@ -296,8 +293,19 @@ function readPicker(container) {
 
 function modelLabel(who, v) {
   const list = who === 'claude' ? models?.claude.models : models?.codex.models;
-  const name = list?.find((x) => x.id === v.model)?.name ?? (v.model || (who === 'codex' ? 'Codex 默认' : '默认'));
-  return `${who === 'claude' ? 'Claude' : 'Codex'} · ${name}${v.effort ? ' · ' + v.effort : ''}`;
+  const name = list?.find((x) => x.id === v.model)?.name ?? (v.model || '默认模型');
+  return `${name}${v.effort ? ' · ' + v.effort : ''}`;
+}
+
+// 本场设置里的一行：左边是谁，中间是当前值，右边提示可以点开修改
+function toolRow(el, label, value, go, dotClass = '') {
+  el.innerHTML = `<span class="tr-label">${dotClass ? `<span class="dot sm ${dotClass}">${LETTER[dotClass]}</span>` : ''}${esc(label)}</span><span class="tr-value"></span><span class="tr-go">${esc(go)}</span>`;
+  el.querySelector('.tr-value').textContent = value;
+}
+
+function renderModelRows(m) {
+  toolRow($('#chipClaude'), 'Claude', modelLabel('claude', m.claude), '切换', 'claude');
+  toolRow($('#chipCodex'), 'Codex', modelLabel('codex', m.codex), '切换', 'codex');
 }
 
 // ---------- 打开讨论室 ----------
@@ -399,47 +407,54 @@ function setState(s) {
   else if (s.phase === 'review') phase = '总结复核';
   else if (s.phase === 'finalize') phase = '合并定稿';
   else phase = '讨论结束 · 自由问答';
-  $('#phasePill').textContent = phase;
-  if (s.models) {
-    $('#chipClaude').textContent = modelLabel('claude', s.models.claude);
-    $('#chipCodex').textContent = modelLabel('codex', s.models.codex);
-  }
+  $('#phasePill').textContent = s.phase === 'done' ? '' : phase;
+  if (s.models) renderModelRows(s.models);
   $('#modePill').textContent = MODE_NAMES[s.mode] ?? '做决定';
   const f = s.facts ?? { version: 0, text: '' };
-  $('#factsChip').textContent = f.text ? `约束卡 v${f.version}` : '＋ 约束卡';
-  $('#factsChip').classList.toggle('empty', !f.text);
+  $('#factsChip').textContent = f.text ? '编辑' : '添加';
+  $('#factsPreview').textContent = f.text ? `v${f.version} · ${f.text}` : '还没有约束卡。写下目标、必须遵守的约束和已核实的事实，双方每次发言都会带上。';
+  $('#factsPreview').classList.toggle('empty', !f.text);
   const turns = (s.usage?.claude.turns ?? 0) + (s.usage?.codex.turns ?? 0);
-  $('#usageChip').textContent = `本场 ${turns}${s.maxTurns ? '/' + s.maxTurns : ''} 次 · ${fmtDuration(Date.now() - s.createdAt)}`;
+  toolRow($('#usageChip'), '已发言', `${turns} 次${s.maxTurns ? ` / 上限 ${s.maxTurns}` : ''} · 共 ${s.maxRounds} 轮`, '调整');
   if ($('#usageDialog').open) renderUsage(s);
   // 一次发言结束后，额度会变化
   if (prev && prev.speaking.length > s.speaking.length) setTimeout(loadStatus, 1500);
+
+  // 状态条：谁在说 / 为什么停了，加上当前能做的操作
+  const done = s.phase === 'done';
+  const dock = $('#statusDock');
+  dock.dataset.state = s.speaking.length ? 'speaking' : s.status === 'paused' ? 'paused'
+    : s.status === 'waiting' && !done ? 'waiting' : s.status === 'stopped' ? 'stopped' : done ? 'done' : 'running';
+  const notice = $('#notice');
+  notice.textContent = s.notice || '';
+  notice.classList.toggle('hidden', !s.notice);
+  // 讨论正常结束、等你提问这类提示用中性样式；暂停、出错、达到上限才用警示色
+  const calm = ['waiting', 'done'].includes(s.status) && done;
+  notice.classList.toggle('info', calm);
+  dock.classList.toggle('alert', !!s.notice && !calm && !s.speaking.length);
 
   const sp = $('#speaking');
   sp.innerHTML = '';
   if (s.speaking.length) {
     for (const a of s.speaking) {
       const span = document.createElement('span');
-      span.className = 'speaking';
+      span.className = 'speaker';
       span.innerHTML = `<span class="pulse" style="background:var(--${a})"></span>${NAMES[a]} 正在发言`;
       sp.appendChild(span);
     }
-  } else {
-    sp.textContent = { running: '', paused: '已暂停', waiting: s.phase === 'done' ? '' : '等你发言', stopped: '已停止', done: '' }[s.status] ?? '';
+  } else if (!s.notice) {
+    sp.textContent = { running: '准备下一位发言…', paused: '已暂停', waiting: done ? '讨论已结束' : '等你发言', stopped: '已停止' }[s.status] ?? '';
   }
-
-  const notice = $('#notice');
-  notice.textContent = s.notice || '';
-  notice.classList.toggle('hidden', !s.notice);
-  // 讨论正常结束、等你提问这类提示用中性样式；暂停、出错、达到上限才用警示色
-  notice.classList.toggle('info', ['waiting', 'done'].includes(s.status) && s.phase === 'done');
 
   const active = ['independent', 'discussion'].includes(s.phase);
   $('#pauseBtn').classList.toggle('hidden', s.status !== 'running');
-  $('#resumeBtn').classList.toggle('hidden', !(s.status === 'paused' || (s.status === 'waiting' && s.phase !== 'done')));
+  $('#resumeBtn').classList.toggle('hidden', !(s.status === 'paused' || (s.status === 'waiting' && !done)));
   $('#interruptBtn').classList.toggle('hidden', !s.speaking.length);
   $('#addRoundBtn').disabled = !active;
   $('#finishBtn').classList.toggle('hidden', !active);
-  $('#stopBtn').disabled = s.status === 'stopped' || (s.phase === 'done' && !s.speaking.length);
+  $('#viewResultBtn').classList.toggle('hidden', !done || !!s.speaking.length);
+  $('#resultTab').classList.toggle('ready', done);
+  $('#stopBtn').disabled = s.status === 'stopped' || (done && !s.speaking.length);
   updateHint();
   workspaceUI.sync();
   if (!prev || prev.status !== s.status || prev.phase !== s.phase) loadRooms();
@@ -583,6 +598,8 @@ function phaseLabel(text) {
   return '讨论结束';
 }
 
+const expandedPairs = new Set();
+
 function renderMsg(m) {
   const el = document.getElementById('m-' + m.id);
   if (!el) return;
@@ -623,13 +640,26 @@ function renderMsg(m) {
   if (m.from === 'user') el.querySelector('.bubble').insertAdjacentHTML('beforeend', deliveryHtml(m));
   if (['summary', 'review', 'final'].includes(m.kind) && m.status === 'complete') {
     const bubble = el.querySelector('.bubble');
-    bubble.insertAdjacentHTML('beforeend', '<button class="btn copy-btn" data-open-result>查看最新结论</button>');
+    bubble.insertAdjacentHTML('beforeend', '<button type="button" class="msg-link" data-open-result>查看结论 →</button>');
     // 已结束、复核有内容、还没有定稿：可以补一份定稿
     const hasFinal = [...current.msgs.values()].some((x) => x.kind === 'final' && x.status === 'complete');
     if (m.kind === 'review' && !hasFinal && current.state?.phase === 'done') {
       bubble.insertAdjacentHTML('beforeend', ` <button class="btn copy-btn" data-finalize title="让一方把复核里的更正合并进总结（多一次模型调用，由额度更宽裕的一方来写）">合并成定稿</button>`);
     }
     if (m.kind === 'summary') $('#jumpSummaryBtn').classList.remove('hidden');
+  }
+
+  // 独立提案两栏并排：完成后折叠过长的一方，避免两栏高度悬殊留下大片空白
+  if (el.parentElement?.classList.contains('pair') && m.status === 'complete') {
+    const bubble = el.querySelector('.bubble');
+    const open = expandedPairs.has(m.id);
+    bubble.classList.add('foldable');
+    bubble.classList.toggle('folded', !open);
+    requestAnimationFrame(() => {
+      const b = bubble.querySelector('.body');
+      if (!open && b.scrollHeight <= b.clientHeight + 8) { bubble.classList.remove('folded', 'foldable'); return; }
+      if (!bubble.querySelector('[data-fold]')) b.insertAdjacentHTML('afterend', `<button type="button" class="fold-btn" data-fold="${m.id}">${open ? '收起' : '展开全文'}</button>`);
+    });
   }
 
   if (m.activity?.length) {
@@ -941,6 +971,7 @@ function toggleSidebar(open) {
 $('#menuBtn').onclick = () => toggleSidebar();
 $('#menuBtn2').onclick = () => toggleSidebar();
 $('#scrim').onclick = () => toggleSidebar(false);
+$('#viewResultBtn').onclick = () => { $('#resultTab').click(); $('#resultTab').focus(); };
 $('#jumpSummaryBtn').onclick = () => {
   $('#roomToolsDialog').close();
   workspaceUI.showDiscussion();
@@ -949,6 +980,14 @@ $('#jumpSummaryBtn').onclick = () => {
 };
 // 复制集中在结论页，使用服务端已复核结果，避免复制未合并的旧总结。
 $('#timeline').addEventListener('click', (e) => {
+  const fold = e.target.closest('[data-fold]');
+  if (fold && current) {
+    const id = fold.dataset.fold;
+    if (expandedPairs.has(id)) expandedPairs.delete(id); else expandedPairs.add(id);
+    renderMsg(current.msgs.get(id));
+    if (!expandedPairs.has(id)) document.getElementById('m-' + id)?.scrollIntoView({ block: 'nearest' });
+    return;
+  }
   if (e.target.closest('[data-open-result]')) {
     $('#resultTab').click();
     $('#resultTab').focus();
@@ -965,7 +1004,6 @@ $('#timeline').addEventListener('click', (e) => {
   loadStatus();
   loadModels();
   setInterval(loadStatus, 60000);
-  setInterval(() => { if (current?.state) setState(current.state); }, 30000); // 刷新"本场时长"
   const rooms = await loadRooms();
   let last = null;
   try { last = localStorage.getItem('roundtable:last'); } catch {}
