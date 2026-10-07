@@ -590,6 +590,13 @@ dialog.drawer::backdrop { background: rgba(20, 18, 15, .22); backdrop-filter: no
 
 .scrim { display: none; }
 
+.behavior-card { min-width: 0; margin: 16px 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.behavior-card legend { font-weight: 600; padding: 0 4px; }
+.behavior-card label { margin-top: 10px; }
+.behavior-card input:not([type="checkbox"]), .behavior-card textarea, #behaviorScene { width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: 10px; padding: 9px 12px; background: var(--panel); color: var(--text); font-size: 14px; resize: vertical; }
+#behaviorForm label.opt-check { display: flex; align-items: flex-start; gap: 8px; }
+#behaviorForm label.opt-check input { flex: none; margin-top: 3px; }
+
 /* ========== 窄屏 ========== */
 @media (max-width: 1100px) {
   :root { --gutter: 22px; }

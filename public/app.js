@@ -1,6 +1,7 @@
 'use strict';
 import { createRenderQueue } from './render-queue.js';
 import { initWorkspace } from './workspace-ui.js';
+import { initBehaviorCards } from './behavior-cards.js';
 
 const $ = (s) => document.querySelector(s);
 const NAMES = { claude: 'Claude', codex: 'Codex', user: '你', evidence: '实验记录' };
@@ -10,6 +11,7 @@ let current = null; // { id, state, msgs: Map }
 let es = null;
 let target = 'all';
 const workspaceUI = initWorkspace({ api, getCurrent: () => current, md });
+const behaviorUI = initBehaviorCards({ api, getCurrent: () => current });
 
 // 执行交接独立加载，避免给讨论消息渲染增加状态。
 const handoffUI = import('/handoff.js').then(({ initHandoff }) => initHandoff({ api, getCurrent: () => current }));
@@ -420,6 +422,7 @@ function handleEvent(ev) {
 function setState(s) {
   const prev = current.state;
   current.state = s;
+  behaviorUI.sync(current);
   experimentUI.then((ui) => ui.sync(current));
   handoffUI.then((ui) => ui.sync(current));
   const roomId = current.id;
@@ -687,6 +690,8 @@ function renderMsg(m) {
   if (m.from === 'evidence') tags.push(['sum', '实验材料 · 待评估']);
   if (m.phase === 'discussion' && m.from !== 'user' && m.round) tags.push(['', `第 ${m.round} 轮`]);
   if (m.model) tags.push(['', m.model]);
+  if (m.behaviorCards?.cards?.length) tags.push(['', `行为卡 v${m.behaviorCards.version}`,
+    m.behaviorCards.cards.map((card) => `${card.title}（用户经验，尚未验证）\n触发：${card.trigger}\n动作：${card.action}`).join('\n\n')]);
   if (m.status === 'interrupted') tags.push(['bad', '被打断 · 未转发给对方']);
   if (m.status === 'failed') tags.push(['bad', '出错']);
 
@@ -696,7 +701,7 @@ function renderMsg(m) {
   const liveTop = prevBody?.scrollTop ?? 0;
   el.innerHTML = `<div class="dot ${m.from}">${experimentRequest ? '室' : LETTER[m.from]}</div>
     <div class="bubble">
-      <div class="who"><b>${experimentRequest ? '讨论室' : NAMES[m.from]}</b>${tags.map(([c, t]) => `<span class="tag ${c}">${esc(t)}</span>`).join('')}<time>${time}</time></div>
+      <div class="who"><b>${experimentRequest ? '讨论室' : NAMES[m.from]}</b>${tags.map(([c, t, title]) => `<span class="tag ${c}"${title ? ` title="${esc(title)}"` : ''}>${esc(t)}</span>`).join('')}<time>${time}</time></div>
       <div class="body"></div>
     </div>`;
   const body = el.querySelector('.body');
@@ -984,6 +989,7 @@ $('#newForm').addEventListener('submit', async (e) => {
     mode: f.mode.value,
     maxTurns: f.maxTurns.value,
     claimCards: f.claimCards.checked,
+    behaviorCards: { enabled: f.behaviorEnabled.checked, scene: f.behaviorScene.value },
     models: readPicker(document.querySelector('[data-picker="new"]')),
   };
   $('#createBtn').disabled = true;

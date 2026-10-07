@@ -20,6 +20,7 @@
 |---|---|
 | `server.js` | HTTP 服务、SSE 推送、API 路由；账号与额度缓存；按额度挑定稿方（`pickFinalizer`）；启动时预热 Codex |
 | `lib/room.js` | 讨论调度器：阶段状态机、消息路由、插话/暂停/打断、约束卡、上限、用量、持久化 |
+| `lib/behavior-cards.js` / `public/behavior-cards.js` | 本场双边行为卡、精确型号与场景匹配、提示更新与就地编辑 |
 | `lib/discussion-quality.js` / `lib/discussion-api.js` | 讨论质量和双版结论协议、扩展模式、已复核结果提取与实验 API 调度 |
 | `lib/experiment.js` / `public/experiment-panel.js` | 独立小实验生命周期、批准卡、证据回流和面板 |
 | `lib/roundtable-client.js` / `scripts/roundtable.js` | 外部对话创建圆桌、有限等待、取得结果；技能入口在 `skills/roundtable` |
@@ -73,6 +74,16 @@ done：自由问答，只回应用户新消息
 
 `done` 阶段用户发消息走 `#freeTurn`（自由问答），不改结论。`conclusionFromRoom()` 返回 `newSince`：最近一份定稿（没有定稿时为复核）之后、`phase === 'done'` 的完整模型发言数；界面据此提示"尚未纳入结论"，空闲时的提示文案也按它区分。两条路回到正式流程：`reopen(rounds=1)` 从 `done` 回到 `discussion`，把 `maxRounds` 设到当前轮次往后 `rounds` 轮、清空收敛标记，讨论满轮后照常总结→复核（→定稿）；`resummarize()` 直接 `#enterSummary`。两者都只在 `done` 且无人发言时可用，接口 `POST /api/rooms/:id/reopen|resummarize`，小实验运行中同样被拦截。重开期间已有讨论消息在旧总结之后，旧结论按原规则不可交付，直到新的复核完成。
 
+## 双边行为卡
+
+`d.behaviorCards` 保存本场总开关、用户选择的 `scene`（general 未指定／engineering／creative）、版本和条件动作卡。卡片含稳定 ID、标题、subject、精确 modelIds、工程或创意场景、单卡开关、trigger/action；来源始终为「用户经验，尚未验证」。新旧讨论默认关闭，不读取历史纠正自动形成模型画像。初始 ID 固定为工程卡 gpt-6-astra/gpt-6-sol、创意卡 claude-opus-5-5；别名、未知型号和空默认型号不推断匹配。
+
+`behaviorCardsFor()` 同时按总开关、单卡开关、场景和目标方当前具体模型 ID 筛选。双方看到同样条件动作，目标方执行，另一方仅在触发、有实质争议且会改变方案选择时追问；不转发对方独立提案，也不改变主笔、连接器或执行权限。当前阶段目标和用户约束优先，探索模式不因行为卡提前收敛。
+
+复用 `POST /api/rooms/:id/settings` 的 `behaviorCards` 字段保存整套设置，语义变化时版本 +1。`#runTurn` 在调用前冻结本次 active 卡及型号，保存到模型消息的 `behaviorCards`；发言旁的版本标签和悬停提示使用此快照，避免把新设置套到旧发言上。初次启用、内容/场景/生效型号变化时按签名注入更新块，停用或失配发送旧卡作废说明。行为卡不放入不可更新的系统提示，原质量规则仍只发一次。
+
+`behaviorCardsSeen` 只在完整结束后记录签名；注入前持久化 `behaviorCardsDirty`，失败、中断或重启仍待重送，撤销也覆盖已尝试注入的提示。进行中修改不打断当前发言，下次生效；双方未收到当前签名或仍 dirty 时不提前结束交叉讨论，旧卡、旧版本或旧型号下的完成不能恢复已清空的收敛标记。卡片只给提示，模拟流程通过不代表模型真实遵从或质量提升。
+
 ## 单实例
 
 同一个讨论记录目录只跑一份服务（`lib/instance-lock.js`）。两份会同时写 `rooms/`，后启动的一份还会按 `.codex-app-server.pid` 把前一份的 Codex app-server 当残留进程清理掉。启动时在创建 Codex 后台之前调用 `claimInstance`：`rooms/.server.json` 记着占用者 PID 和端口，占用者存活且 `/api/health` 应答就打开它并退出；刚启动还没写端口时最多等 15 秒；进程已不在或一直不应答（PID 被复用）按失效接管；锁文件用 `wx` 原子创建，同时启动只有一份成功。没有锁文件时还会在 4545–4555 里探测旧版服务。监听成功后写入实际端口，正常退出（含 Windows 关窗口的 SIGHUP）删除自己的锁；强杀留下的锁下次启动接管。`scripts/roundtable.js` 没给 `--url` 时读锁文件里的端口。
@@ -82,12 +93,13 @@ done：自由问答，只回应用户新消息
 ```
 【讨论室说明】规则 + 主题 + 模式   ← 只在这一方第一次成功发言前附上（带入旧对话时系统说明可能不生效）
 【约束与事实卡 vN】……              ← 每次都附；版本更新时给出新旧两版并说明旧版作废
+【双边行为卡 vN】……                ← 首次启用或生效内容/型号变化时附；停用明确撤销，失败/中断重送
 【阶段】……  + 新消息 + 该模式的要求
 ```
 
 规则文本在 `rules()`，模式定义在 `MODES`（`decide` / `brainstorm` / `review` / `paper` / `learn`）。论文模式先双独立审稿，再核对批评和作者回应；讲课模式由 `firstSpeaker` 讲解，另一方追问。
 
-**规则只发一次**：讨论质量规则（`QUALITY_RULES`：反驳先定位原话、检查最脆弱假设、事实分歧转查证）和可选的主张格式都写在 `rules()` 里，随开场说明发一次，同时作为系统提示保留（Claude 每次 `--append-system-prompt`，Codex 线程的 `developerInstructions`），不再附在每轮消息末尾。每轮只带阶段说明、新消息和约束卡。主张格式（`CLAIM_PROTOCOL`）只在 `d.claimCards` 为真时写进规则，新建时默认关闭；旧讨论没有该字段，视为关闭，已有发言里的【主张】仍会被提取。这些是提示协议，不是质量保证。
+**规则只发一次**：讨论质量规则（`QUALITY_RULES`：反驳先定位原话、检查最脆弱假设、事实分歧转查证）和可选的主张格式都写在 `rules()` 里，随开场说明发一次，同时作为系统提示保留（Claude 每次 `--append-system-prompt`，Codex 线程的 `developerInstructions`），不再附在每轮消息末尾。每轮通常只带阶段说明、新消息和约束卡；行为卡首次启用或生效内容变化时另附更新块。主张格式（`CLAIM_PROTOCOL`）只在 `d.claimCards` 为真时写进规则，新建时默认关闭；旧讨论没有该字段，视为关闭，已有发言里的【主张】仍会被提取。这些是提示协议，不是质量保证。
 
 总结固定 `## 三句话版` 和 `## 完整版`，各模式总结项目置于完整版三级标题下。复核和更正同时覆盖两版。`conclusionFromRoom()` 只返回 done 阶段最新完整总结/复核对应的结果；有更正时等完整定稿。新总结、失败复核、未处理实验和重新讨论会使旧定稿失效。旧总结无双版标题时短版为空，不臆造摘要。
 
@@ -239,6 +251,7 @@ done：自由问答，只回应用户新消息
 按 `AGENTS.md` / `CLAUDE.md` 的「适度验证与实现」选择最小相关检查；以下为可用测试入口，不是每次都要执行的清单。纯文档只核对内容与差异，全量测试仅在影响范围或实际失败需要时运行。
 
 - `node --test test/room.test.js`：模拟测试，覆盖独立阶段失败/打断、初始化期间停止、对话被占用、提前收敛条件、定稿、约束卡版本、发言上限、探索模式、送达状态。
+- `node --test test/behavior-cards.test.js`：行为卡场景与精确型号、默认关闭和旧记录、双边提示及独立隔离、编辑/停用/换场景/换型号、失败中断撤销、发言中更新与恢复；不调用真实模型。
 - `node --test test/claim-board.test.js test/message-links.test.js`：核查请求与完整回复关联、整条发言用户标记、定向实验回传来源，以及前端关联与明确实验字段预填。不调用真实模型。
 - 当前 24 项讨论模拟测试直接覆盖 Claude urgent 两阶段重来、Codex steer 成功/失败/迟到及重送、finish 两阶段与旧回执竞争、双方约束卡更新/清空。
 - `node --test test/handoff.test.js`：临时真实 Git 仓库配模拟执行器，覆盖全生命周期、源目录保护、漂移、取消/超时/重启、明确提交确认、忽略文件碰撞、hooks 禁用和清理。

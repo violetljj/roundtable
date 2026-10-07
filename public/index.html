@@ -147,6 +147,19 @@
         <div class="inline-actions"><button type="button" class="btn sm ghost" id="cancelFacts">取消</button><button type="submit" class="btn sm primary">保存为新版本</button></div>
       </form>
     </section>
+    <section class="tool-section" id="behaviorSection">
+      <div class="ts-head"><h4>双边行为卡</h4><button class="link" id="editBehavior">编辑</button></div>
+      <p class="facts-preview" id="behaviorPreview"></p>
+      <form class="inline-edit" id="behaviorForm">
+        <label class="opt-check"><input type="checkbox" id="behaviorEnabled"><span>启用本场行为卡</span></label>
+        <label>本场适用场景<select id="behaviorScene"><option value="general">未指定（场景卡不生效）</option><option value="engineering">工程与可靠性</option><option value="creative">创意与视觉</option></select></label>
+        <p class="fine">双方共用触发条件与动作。只在有争议且会改变方案选择时追问，不要求每轮找错。场景由你选择，混合任务可在阶段变化时修改。</p>
+        <div id="behaviorCardList"></div>
+        <p class="fine">保存、停用或切换场景从双方下一次发言起生效，当前发言沿用原卡；型号变化需精确匹配，不自动迁移。这些是假设，不是模型能力评分。</p>
+        <p class="form-error" id="behaviorError" role="alert"></p>
+        <div class="inline-actions"><button type="button" class="btn sm ghost" id="cancelBehavior">取消</button><button type="submit" class="btn sm primary">保存行为卡</button></div>
+      </form>
+    </section>
     <section class="tool-section" id="modelsSection">
       <div class="ts-head"><h4>模型</h4><span class="ts-note">下一次发言生效</span></div>
       <button class="tool-row" id="chipClaude"></button>
@@ -240,6 +253,8 @@
       <span>要求标注可核查主张<span class="fine">将关键判断列为主张卡片，方便逐条核查。</span></span>
     </label>
     <div class="model-picker" data-picker="new"></div>
+    <label class="opt-check"><input type="checkbox" name="behaviorEnabled"><span>试用双边行为卡<span class="fine">工程场景检查保护是否必要；创意场景保留发散，落地时形成推荐。用户经验，尚未验证；本场设置中可编辑或停用。</span></span></label>
+    <label>行为卡适用场景<select name="behaviorScene"><option value="general">未指定（场景卡不生效）</option><option value="engineering">工程与可靠性</option><option value="creative">创意与视觉</option></select><span class="fine">初始工程卡仅绑定 gpt-6-astra / gpt-6-sol，创意卡仅绑定 claude-opus-5-5；其他型号需手动编辑。</span></label>
     </div></details>
     <div class="dialog-actions">
       <span class="fine">讨论期间只读项目文件</span>

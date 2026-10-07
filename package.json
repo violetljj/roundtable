@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js --open",
     "smoke": "node smoke-test.js",
-    "test": "node --test test/room.test.js test/handoff.test.js test/execution-agents.test.js test/claim-board.test.js test/message-links.test.js test/file-claims.test.js test/source-reference.test.js test/notifications.test.js test/render-queue.test.js test/status-cache.test.js test/discussion-quality.test.js test/discussion-api.test.js test/quality-flow.test.js test/experiment.test.js test/roundtable-client.test.js test/instance-lock.test.js",
+    "test": "node --test test/behavior-cards.test.js test/room.test.js test/handoff.test.js test/execution-agents.test.js test/claim-board.test.js test/message-links.test.js test/file-claims.test.js test/source-reference.test.js test/notifications.test.js test/render-queue.test.js test/status-cache.test.js test/discussion-quality.test.js test/discussion-api.test.js test/quality-flow.test.js test/experiment.test.js test/roundtable-client.test.js test/instance-lock.test.js",
     "claims": "node scripts/claims.js",
     "roundtable": "node scripts/roundtable.js"
   },
