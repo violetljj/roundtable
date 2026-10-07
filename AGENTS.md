@@ -45,4 +45,5 @@
 - 不引入 npm 依赖（目前零依赖，只用 Node 内置模块），除非先和用户确认。
 - 改动讨论流程后，要能用模拟测试复现的，就补一个测试（参照 `test/room.test.js` 里的 `fakeAgent`）。
 - 本机环境：Windows；Node 在 `E:\codex-tools\tools\nodejs\node.exe`；开发服务器 `node server.js`，端口 4545。
+- 同一个讨论记录目录（默认 `rooms/`）只能跑一份服务，启动时会按 `rooms/.server.json` 自动检查，已有就直接打开它。验收需要起服务时：用户那份在跑就用它；要独立的临时服务，必须同时设 `ROUNDTABLE_ROOMS_DIR`（临时目录）和 `ROUNDTABLE_PORT`，用完结束进程并清理该目录。
 - **不要结束 Codex 桌面端的后台进程**。讨论室只清理自己启动的那个（命令行带 `--disable plugins`）。

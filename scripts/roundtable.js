@@ -1,6 +1,18 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { RoundtableClient, RoundtableError } from '../lib/roundtable-client.js';
+import { readLock } from '../lib/instance-lock.js';
+
+// 没给 --url 时用正在运行的讨论室实际端口（4545 被占用时服务会顺延到别的端口）
+function runningUrl() {
+  const roomsDir = process.env.ROUNDTABLE_ROOMS_DIR
+    ? path.resolve(process.env.ROUNDTABLE_ROOMS_DIR)
+    : path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'rooms');
+  const port = readLock(roomsDir)?.port;
+  return port ? `http://127.0.0.1:${port}` : undefined;
+}
 
 const usage = `圆桌入口（不调用客户端内部会话接口）
   node scripts/roundtable.js start --input <UTF-8 JSON文件> [--wait] [--timeout 60] [--url http://127.0.0.1:4545]
@@ -34,7 +46,7 @@ try {
     }
     const timeoutMs = Number(options.timeout ?? 60) * 1000;
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 3600000) throw new RoundtableError('timeout 必须大于 0 且不超过 3600 秒', 'INVALID_INPUT');
-    client = new RoundtableClient({ url: options.url });
+    client = new RoundtableClient({ url: options.url ?? runningUrl() });
     if (command === 'start') {
       if (!options.input) throw new RoundtableError('start 需要 --input 文件', 'INVALID_INPUT');
       const text = await fs.readFile(options.input, 'utf8');

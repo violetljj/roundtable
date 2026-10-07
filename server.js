@@ -14,27 +14,32 @@ import { previewSource } from './lib/source-reference.js';
 import { Experiment } from './lib/experiment.js';
 import { roomResult, experimentAction, assertDiscussionAvailable } from './lib/discussion-api.js';
 import { createStatusCache } from './lib/status-cache.js';
+import { claimInstance, updateInstance, releaseInstance } from './lib/instance-lock.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ROOMS_DIR = process.env.ROUNDTABLE_ROOMS_DIR ? path.resolve(process.env.ROUNDTABLE_ROOMS_DIR) : path.join(ROOT, 'rooms');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const BASE_PORT = parseInt(process.env.ROUNDTABLE_PORT ?? '4545', 10);
 
-// 已经有讨论室在运行就直接打开它：两份服务会同时写同一批讨论记录，
-// 后启动的一份还会把前一份的 Codex 后台当作残留进程清理掉
-const running = await fetch(`http://127.0.0.1:${BASE_PORT}/api/health`, { signal: AbortSignal.timeout(1500) })
-  .then((r) => (r.ok ? r.json() : null)).catch(() => null);
-if (running && 'claudeExe' in running && 'codex' in running) {
-  const url = `http://127.0.0.1:${BASE_PORT}`;
+fs.mkdirSync(ROOMS_DIR, { recursive: true });
+
+// 同一个讨论记录目录只跑一份服务；已有的话直接打开它（规则见 lib/instance-lock.js）
+let existing;
+try {
+  existing = await claimInstance(ROOMS_DIR, { basePort: BASE_PORT });
+} catch (e) {
+  console.error(e.message);
+  process.exit(1);
+}
+if (existing) {
+  const url = `http://127.0.0.1:${existing.port}`;
   console.log(`讨论室已经在运行：${url}，不再重复启动。`);
   if (process.argv.includes('--open')) await new Promise((resolve) => exec(`start "" "${url}"`, resolve));
   process.exit(0);
-} else {
-  // 窗口标题在这里设：.cmd 里写中文标题会因为代码页切换被读成乱码命令
-  process.title = '圆桌讨论室（关闭此窗口即停止）';
 }
-
-fs.mkdirSync(ROOMS_DIR, { recursive: true });
+process.on('exit', () => releaseInstance(ROOMS_DIR));
+// 窗口标题在这里设：.cmd 里写中文标题会因为代码页切换被读成乱码命令
+process.title = '圆桌讨论室（关闭此窗口即停止）';
 
 const claudeExe = findClaudeExe();
 const codexServer = new CodexServer({ pidFile: path.join(ROOMS_DIR, '.codex-app-server.pid') });
@@ -345,6 +350,7 @@ server.on('error', (e) => {
 });
 server.listen(port, '127.0.0.1', () => {
   const url = `http://127.0.0.1:${port}`;
+  updateInstance(ROOMS_DIR, { port });
   console.log(`讨论室已启动：${url}`);
   console.log(claudeExe ? `Claude 命令行：${claudeExe}` : '警告：找不到 Claude 命令行');
   console.log('关闭这个窗口即可停止服务。');
@@ -363,4 +369,5 @@ async function shutdown() {
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+process.on('SIGHUP', shutdown); // Windows 上直接关掉命令行窗口时收到的是这个
 process.on('exit', () => codexServer.stop());
