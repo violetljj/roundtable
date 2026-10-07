@@ -21,11 +21,11 @@
     <button class="btn primary block" id="newRoomBtn">＋ 新建讨论</button>
     <div class="side-label">讨论记录</div>
     <ul class="room-list" id="roomList"></ul>
-    <div class="accounts" id="accounts">
-      <div class="side-label row">账号与额度 <button class="link" id="refreshStatus" title="重新读取账号和额度">刷新</button></div>
+    <details class="accounts" id="accounts" open>
+      <summary class="side-label row">账号与额度 <button class="link" id="refreshStatus" title="重新读取账号和额度">刷新</button></summary>
       <div class="acct claude" id="acctClaude"><div class="acct-head"><span class="dot sm claude">C</span><b>Claude</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
       <div class="acct codex" id="acctCodex"><div class="acct-head"><span class="dot sm codex">X</span><b>Codex</b><span class="plan"></span></div><div class="acct-body">读取中…</div></div>
-    </div>
+    </details>
   </aside>
 
   <main class="main">
@@ -36,35 +36,46 @@
           <span class="dot user">你</span><span class="dot claude">C</span><span class="dot codex">X</span>
         </div>
         <h1>让 Claude 和 Codex 一起讨论</h1>
-        <p>你提出问题，两边先各自独立思考，再互相质疑、补充，最后整理出共识和分歧。<br>过程中你随时可以插话、点名、打断或叫停。</p>
-        <button class="btn primary" id="emptyNewBtn">开始一场新讨论</button>
+        <p>你提出问题，它们先各自独立思考，再互相质疑、补充，最后整理出共识和分歧。过程中你随时可以插话、点名、打断或叫停。</p>
+        <ol class="steps">
+          <li><b>独立提案</b><span>互相看不到，避免被先说的一方带偏</span></li>
+          <li><b>交叉讨论</b><span>轮流回应，可以互相提问</span></li>
+          <li><b>总结与复核</b><span>一方总结、另一方纠错，得出定稿</span></li>
+        </ol>
+        <button class="btn primary lg" id="emptyNewBtn">开始一场新讨论</button>
       </div>
     </section>
 
     <section class="room hidden" id="roomView">
       <header class="room-head">
-        <button class="icon-btn menu-btn" id="menuBtn" title="讨论列表" aria-label="打开讨论列表">☰</button>
-        <div class="room-title">
-          <h2 id="roomTopic"></h2>
-          <div class="room-meta">
-            <span class="pill" id="phasePill"></span>
-            <span class="pill mode" id="modePill"></span>
-            <button class="model-chip facts" id="factsChip" title="查看或修改约束与事实卡"></button>
-            <button class="model-chip usage" id="usageChip" title="本场用量与上限设置"></button>
-            <button class="model-chip claude" id="chipClaude" title="点击切换 Claude 的模型和推理强度"></button>
-            <button class="model-chip codex" id="chipCodex" title="点击切换 Codex 的模型和推理强度"></button>
-            <span class="speaking" id="speaking"></span>
+        <div class="head-row">
+          <button class="icon-btn menu-btn" id="menuBtn" title="讨论列表" aria-label="打开讨论列表">☰</button>
+          <h2 class="room-title" id="roomTopic"></h2>
+          <div class="controls">
+            <span class="speaking" id="speaking" aria-live="polite"></span>
+            <button class="btn warn hidden" id="interruptBtn" title="立即停止当前发言，未完成的内容不会转给对方">打断</button>
+            <button class="btn" id="pauseBtn" title="当前发言结束后，不再启动下一位">暂停</button>
+            <button class="btn primary" id="resumeBtn" title="继续讨论">继续</button>
+            <button class="btn" id="finishBtn" title="停止讨论，让双方整理共识和分歧">总结并结束</button>
+            <button class="btn accent hidden" id="jumpSummaryBtn" title="跳到总结和复核（共识、分歧、更正、下一步）">看结论</button>
+            <div class="more">
+              <button class="btn icon" id="moreBtn" title="更多操作" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">⋯</button>
+              <div class="menu hidden" id="moreMenu" role="menu">
+                <button id="addRoundBtn" role="menuitem" title="讨论轮数上限 +1">再加一轮</button>
+                <a id="exportBtn" role="menuitem" title="下载完整记录（Markdown）">导出完整记录</a>
+                <button id="stopBtn" role="menuitem" class="danger" title="立即停止，不做总结">停止（不总结）</button>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="controls">
-          <button class="btn" id="pauseBtn" title="当前发言结束后，不再启动下一位">⏸ 暂停</button>
-          <button class="btn" id="resumeBtn" title="继续讨论">▶ 继续</button>
-          <button class="btn warn" id="interruptBtn" title="立即停止当前发言，未完成的内容不会转给对方">✋ 打断</button>
-          <button class="btn" id="addRoundBtn" title="讨论轮数上限 +1">＋1 轮</button>
-          <button class="btn" id="finishBtn" title="停止讨论，让双方整理共识和分歧">📋 总结并结束</button>
-          <button class="btn ghost" id="stopBtn" title="立即停止，不做总结">■ 停止</button>
-          <button class="btn hidden" id="jumpSummaryBtn" title="跳到总结和复核（共识、分歧、更正、下一步）">↧ 看结论</button>
-          <a class="btn ghost" id="exportBtn" title="下载完整记录（Markdown）">⤓ 导出</a>
+        <div class="room-meta">
+          <span class="pill phase" id="phasePill"></span>
+          <span class="pill mode" id="modePill"></span>
+          <span class="meta-sep" aria-hidden="true"></span>
+          <button class="chip facts" id="factsChip" title="查看或修改约束与事实卡"></button>
+          <button class="chip usage" id="usageChip" title="本场用量与上限设置"></button>
+          <button class="chip claude" id="chipClaude" title="点击切换 Claude 的模型和推理强度"></button>
+          <button class="chip codex" id="chipCodex" title="点击切换 Codex 的模型和推理强度"></button>
         </div>
       </header>
       <div class="notice hidden" id="notice"></div>
@@ -72,20 +83,20 @@
       <div class="timeline" id="timeline"></div>
 
       <footer class="composer">
-        <div class="composer-row">
-          <div class="seg" id="targetSeg" role="group" aria-label="发给谁">
-            <button data-target="all" class="on">对所有人</button>
-            <button data-target="claude">@Claude</button>
-            <button data-target="codex">@Codex</button>
-          </div>
-          <label class="urgent" title="打断正在发言的一方，让它马上按你的话调整（Codex 不打断，直接插入）">
-            <input type="checkbox" id="urgentChk"> 立即纠正
-          </label>
-          <span class="hint" id="composerHint">默认排在当前发言之后。Enter 发送，Shift+Enter 换行</span>
-        </div>
-        <div class="composer-box">
+        <div class="composer-card">
           <textarea id="input" rows="2" aria-label="你的发言" placeholder="随时插话：补充要求、提问、纠正方向……"></textarea>
-          <button class="btn primary send" id="sendBtn">发送</button>
+          <div class="composer-row">
+            <div class="seg" id="targetSeg" role="group" aria-label="发给谁">
+              <button data-target="all" class="on">所有人</button>
+              <button data-target="claude">@Claude</button>
+              <button data-target="codex">@Codex</button>
+            </div>
+            <label class="urgent" title="打断正在发言的一方，让它马上按你的话调整（Codex 不打断，直接插入）">
+              <input type="checkbox" id="urgentChk"><span>立即纠正</span>
+            </label>
+            <span class="hint" id="composerHint">默认排在当前发言之后。Enter 发送，Shift+Enter 换行</span>
+            <button class="btn primary send" id="sendBtn">发送</button>
+          </div>
         </div>
       </footer>
     </section>

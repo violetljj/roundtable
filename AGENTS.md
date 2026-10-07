@@ -26,7 +26,10 @@
 1. 确认 `node --test test/room.test.js` 全部通过（改了连接器还要跑过 `node smoke-test.js`）。**测试不过不提交**，先修或告诉用户。
 2. `git status` 检查：**只提交自己这次的改动**（包括 `docs/DEVLOG.md` 里自己新加的那条）。有不是你改的未提交改动，那是对方正在进行的工作，不要把它一起提交；用 `git add <具体文件>`，不要 `git add -A`。
 3. 提交信息用英文祈使句，第一行概括改动（例如 `Add task card handoff`），正文可以写要点；末尾加作者行：Claude 写 `Co-Authored-By: Claude <noreply@anthropic.com>`，Codex 写 `Co-Authored-By: Codex <noreply@openai.com>`。
-4. 推送前先 `git pull --rebase origin main`，合并对方已推送的提交，然后 `git push origin main`。
+4. 推送前先 `git fetch origin`。我们共用同一个工作目录，对方常有未提交的改动，这时 `git pull --rebase` 会拒绝执行，**不要用 `--autostash` 或 `git stash` 动对方的改动**：
+   - 远端没有新提交（`git merge-base --is-ancestor origin/main HEAD` 成立）：直接 `git push origin main`，这是快进推送，不会覆盖任何东西。
+   - 远端有新提交：工作区干净时 `git pull --rebase origin main` 再推送；工作区不干净就停下来告诉用户。
+   - 只提交对方没碰过的部分时，可以用 `git diff <文件>` 生成补丁、去掉对方的片段后 `git apply --cached`，提交前用 `git diff --cached` 确认暂存区里只有自己的改动。
 5. **遇到冲突、rebase 失败或推送被拒，就停下来告诉用户**，不要自己解决冲突后强推。**绝不使用 `--force` / `--force-with-lease`**，不改写已推送的历史。
 
 始终不要提交：`rooms/`（讨论记录，含项目内容）、凭证、本机配置。`.gitignore` 已经排除了它们，提交前再看一眼暂存的文件列表。

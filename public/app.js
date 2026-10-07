@@ -60,6 +60,8 @@ async function loadRooms() {
     for (const r of g.rooms) {
       const li = document.createElement('li');
       li.className = 'room-item' + (current?.id === r.id ? ' active' : '');
+      // 侧栏状态点：进行中 / 暂停 / 等你回答 / 结束
+      li.dataset.status = r.status === 'waiting' && r.phase !== 'done' ? 'waiting-user' : r.status;
       li.innerHTML = `<span class="t"></span><span class="s"></span>`;
       li.querySelector('.t').textContent = r.topic;
       li.querySelector('.s').textContent = `${new Date(r.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })} · ${statusText(r)}`;
@@ -173,7 +175,12 @@ document.getElementById('accounts').addEventListener('click', async (e) => {
     try { renderStatus(await api('/api/status/refresh-claude', {})); } catch (err) { alert(err.message); }
   }
 });
-$('#refreshStatus').onclick = loadStatus;
+// 按钮放在折叠标题里：点它只刷新，不折叠面板
+$('#refreshStatus').onclick = (e) => { e.preventDefault(); e.stopPropagation(); loadStatus(); };
+try { if (localStorage.getItem('roundtable:accounts') === 'closed') $('#accounts').open = false; } catch {}
+$('#accounts').addEventListener('toggle', () => {
+  try { localStorage.setItem('roundtable:accounts', $('#accounts').open ? 'open' : 'closed'); } catch {}
+});
 
 // ---------- 模型选择 ----------
 let models = null;
@@ -335,13 +342,15 @@ function setState(s) {
   const notice = $('#notice');
   notice.textContent = s.notice || '';
   notice.classList.toggle('hidden', !s.notice);
+  // 讨论正常结束、等你提问这类提示用中性样式；暂停、出错、达到上限才用警示色
+  notice.classList.toggle('info', s.status === 'waiting' && s.phase === 'done');
 
   const active = ['independent', 'discussion'].includes(s.phase);
   $('#pauseBtn').classList.toggle('hidden', s.status !== 'running');
   $('#resumeBtn').classList.toggle('hidden', !(s.status === 'paused' || (s.status === 'waiting' && s.phase !== 'done')));
-  $('#interruptBtn').disabled = !s.speaking.length;
+  $('#interruptBtn').classList.toggle('hidden', !s.speaking.length);
   $('#addRoundBtn').disabled = !active;
-  $('#finishBtn').disabled = !active;
+  $('#finishBtn').classList.toggle('hidden', !active);
   $('#stopBtn').disabled = s.status === 'stopped' || (s.phase === 'done' && !s.speaking.length);
   updateHint();
   if (!prev || prev.status !== s.status || prev.phase !== s.phase) loadRooms();
@@ -453,7 +462,7 @@ function upsertMsg(m, live) {
       if (!pair) {
         const label = document.createElement('div');
         label.className = 'pair-label';
-        label.textContent = '独立提案：双方同时作答，互相看不到对方的内容';
+        label.textContent = '双方同时作答，互相看不到对方的内容';
         $('#timeline').appendChild(label);
         pair = document.createElement('div');
         pair.className = 'pair';
@@ -469,15 +478,29 @@ function upsertMsg(m, live) {
   if (live && stick) scrollToBottom();
 }
 
+const PHASE_MARK = /^(第 0 轮|进入交叉讨论|.*进入总结|复核提出了更正|复核无异议|定稿完成|讨论结束)/;
+function phaseLabel(text) {
+  if (/^第 0 轮/.test(text)) return '独立提案';
+  const m = text.match(/^进入交叉讨论，共 (\d+) 轮/);
+  if (m) return `交叉讨论 · 共 ${m[1]} 轮`;
+  if (/进入总结/.test(text)) return text.replace(/，?进入总结。?$/, '') ? `总结（${text.replace(/，?进入总结。?$/, '').replace(/。$/, '')}）` : '总结';
+  if (/^复核提出了更正/.test(text)) return '合并定稿';
+  if (/^复核无异议/.test(text)) return '讨论结束 · 复核无异议';
+  if (/^定稿完成/.test(text)) return '讨论结束 · 已定稿';
+  return '讨论结束';
+}
+
 function renderMsg(m) {
   const el = document.getElementById('m-' + m.id);
   if (!el) return;
   if (m.from === 'system') {
-    el.className = 'sys';
-    el.textContent = m.text;
+    // 阶段切换显示成分隔线，其他系统消息是小字备注
+    el.className = PHASE_MARK.test(m.text) ? 'sys divider' : 'sys';
+    el.textContent = PHASE_MARK.test(m.text) ? phaseLabel(m.text) : m.text;
+    el.title = m.text;
     return;
   }
-  el.className = `msg ${m.from}${m.status === 'interrupted' || m.status === 'failed' ? ' interrupted' : ''}`;
+  el.className = `msg ${m.from}${m.status === 'interrupted' || m.status === 'failed' ? ' interrupted' : ''}${m.status === 'streaming' ? ' streaming' : ''}`;
   if (m.kind) el.dataset.kind = m.kind;
   const tags = [];
   if (m.from === 'user' && m.target && m.target !== 'all') tags.push(['', '@' + NAMES[m.target]]);
@@ -584,8 +607,13 @@ function md(src) {
       const rows = [];
       while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) rows.push(lines[i++]);
       const cells = (r) => r.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
-      const body = rows.filter((r) => !/^\|[\s:|-]+\|$/.test(r.trim()));
-      out.push(`<pre><code>${esc(body.map((r) => cells(r).join('  │  ')).join('\n'))}</code></pre>`);
+      const isSep = (r) => /^\|[\s:|-]+\|$/.test(r.trim());
+      // 第二行是 |---|---| 分隔行时，第一行是表头
+      const hasHead = rows.length > 1 && isSep(rows[1]);
+      const head = hasHead ? `<thead><tr>${cells(rows[0]).map((c) => `<th>${inline(c)}</th>`).join('')}</tr></thead>` : '';
+      const bodyRows = rows.slice(hasHead ? 2 : 0).filter((r) => !isSep(r));
+      const tbody = `<tbody>${bodyRows.map((r) => `<tr>${cells(r).map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody>`;
+      out.push(`<div class="table-wrap"><table>${head}${tbody}</table></div>`);
       continue;
     }
     const buf = [];
@@ -768,6 +796,17 @@ $('#interruptBtn').onclick = () => action('interrupt');
 $('#addRoundBtn').onclick = () => action('add-round');
 $('#finishBtn').onclick = () => action('finish');
 $('#stopBtn').onclick = () => { if (confirm('立即停止讨论，不做总结？')) action('stop'); };
+
+// 「⋯」更多菜单：点外面或按 Esc 关闭，选完一项也关闭
+function toggleMore(open) {
+  const on = open ?? $('#moreMenu').classList.contains('hidden');
+  $('#moreMenu').classList.toggle('hidden', !on);
+  $('#moreBtn').setAttribute('aria-expanded', String(on));
+}
+$('#moreBtn').onclick = (e) => { e.stopPropagation(); toggleMore(); };
+$('#moreMenu').addEventListener('click', () => toggleMore(false));
+document.addEventListener('click', (e) => { if (!e.target.closest('.more')) toggleMore(false); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggleMore(false); });
 function toggleSidebar(open) {
   const on = open ?? !$('#sidebar').classList.contains('open');
   $('#sidebar').classList.toggle('open', on);
