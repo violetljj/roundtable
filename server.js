@@ -8,9 +8,11 @@ import { CodexServer } from './lib/codex.js';
 import { findClaudeExe, claudeAccount, claudeEvents, probeClaudeLimits, CLAUDE_MODELS, CLAUDE_EFFORTS, prettyClaudeModel, resolveClaudeAlias, loadResolvedClaudeModels, resolvedClaudeModels } from './lib/claude.js';
 import { Room } from './lib/room.js';
 import { listProjects, listClaudeSessions, projectContext } from './lib/desktop.js';
+import { Handoff } from './lib/handoff.js';
+import { createExecutionAgentFactory } from './lib/execution-agents.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const ROOMS_DIR = path.join(ROOT, 'rooms');
+const ROOMS_DIR = process.env.ROUNDTABLE_ROOMS_DIR ? path.resolve(process.env.ROUNDTABLE_ROOMS_DIR) : path.join(ROOT, 'rooms');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const BASE_PORT = parseInt(process.env.ROUNDTABLE_PORT ?? '4545', 10);
 
@@ -34,6 +36,7 @@ function pickFinalizer(reviewer) {
   return claudeUse < codexUse ? 'claude' : 'codex';
 }
 const ctx = { roomsDir: ROOMS_DIR, codexServer, claudeExe, pickFinalizer };
+const executionAgentFactory = createExecutionAgentFactory({ codexServer, claudeExe });
 
 // ---------- 账号与额度 ----------
 // Claude 的额度只能在发言时由命令行顺带报告，所以缓存到磁盘，重启后仍能显示上一次的数据
@@ -106,6 +109,7 @@ for (const name of fs.readdirSync(ROOMS_DIR)) {
 const clients = new Map(); // roomId -> Set<res>
 function register(room) {
   rooms.set(room.d.id, room);
+  room.handoff = new Handoff(room, { agentFactory: executionAgentFactory });
   room.on('event', (ev) => {
     const data = `data: ${JSON.stringify(ev)}\n\n`;
     for (const res of clients.get(room.d.id) ?? []) res.write(data);
@@ -186,6 +190,25 @@ const server = http.createServer(async (req, res) => {
 
     if (room && req.method === 'GET' && parts.length === 3) return send(res, 200, room.snapshot());
 
+    if (room && parts[3] === 'handoff') {
+      if (req.method === 'GET' && parts.length === 4) return send(res, 200, room.handoff.snapshot());
+      if (req.method === 'POST' && parts.length === 5) {
+        // 执行和合并具有写入权限，只接受同源网页或没有 Origin 的本地客户端。
+        if (req.headers.origin && req.headers.origin !== `http://${host}`) return send(res, 403, { error: '只允许从讨论室页面操作执行交接' });
+        const actions = { card: 'saveCard', start: 'start', cancel: 'cancel', merge: 'merge', discard: 'discard' };
+        const action = actions[parts[4]];
+        if (!action) return send(res, 404, { error: '未知的交接操作' });
+        const body = await readJson(req);
+        try {
+          await room.handoff[action](body);
+          return send(res, 200, room.handoff.snapshot());
+        } catch (e) {
+          return send(res, 409, { error: e.message });
+        }
+      }
+      return send(res, 404, { error: '未知的交接接口' });
+    }
+
     if (room && req.method === 'GET' && parts[3] === 'events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
       res.write(`data: ${JSON.stringify({ type: 'snapshot', room: room.snapshot() })}\n\n`);
@@ -256,5 +279,12 @@ server.listen(port, '127.0.0.1', () => {
   codexServer.start().then(() => getModels()).catch((e) => console.error('Codex 启动失败：', e.message));
 });
 
-process.on('SIGINT', () => { codexServer.stop(); process.exit(0); });
+async function shutdown() {
+  server.close();
+  await Promise.allSettled([...rooms.values()].map((room) => room.handoff.cancel()));
+  codexServer.stop();
+  process.exit(0);
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 process.on('exit', () => codexServer.stop());

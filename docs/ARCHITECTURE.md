@@ -23,6 +23,9 @@
 | `lib/claude.js` | Claude 连接器：找 `claude.exe`、清理环境变量、流式 JSON 解析、会话新建/续接/复制、额度与型号上报 |
 | `lib/codex.js` | Codex 连接器：`CodexServer`（app-server 进程与 JSON-RPC）+ `CodexAgent`（单个对话） |
 | `lib/desktop.js` | 列出项目、Claude 已有对话、项目上下文（CLAUDE.md / AGENTS.md / 记忆数） |
+| `lib/handoff.js` | 独立的执行交接状态、任务卡、Git worktree、提交审查、确认合并与清理 |
+| `lib/execution-agents.js` | 全新执行/审查会话与自有进程释放；不复用讨论会话 |
+| `public/handoff.js` / `public/handoff.css` | 执行交接面板；由 app.js 动态加载 |
 | `public/` | 前端，纯 HTML/CSS/JS，无构建步骤 |
 | `test/room.test.js` | 模拟测试（`fakeAgent`，不调用模型） |
 | `smoke-test.js` | 真实冒烟测试（两边各：启动、发言、打断、恢复） |
@@ -58,6 +61,7 @@ done：自由问答，只回应用户新消息
 - 被打断或失败的发言：状态 `interrupted` / `failed`，**不转发**给对方；那一轮发给它的消息重置 `seenBy`，下次重发，并附说明"你上一轮被打断"。
 - 立即纠正（`urgent`）：Claude → 打断后带着纠正重新发言；Codex → `turn/steer` 插入正在进行的发言，不打断。
 - Codex steer 需要已取得 turn ID 且请求成功才标记即时送达；未成功的消息仍待后续普通收集。
+- steer 回执晚于原发言结束或打断时，也保留待送达；切入总结后，旧讨论发言的回执不能再改变轮次或暂停总结。
 
 ## 每次发言的提示组成（`#runTurn`）
 
@@ -105,6 +109,20 @@ done：自由问答，只回应用户新消息
 - Claude 对话：`~/.claude/projects/<路径里非字母数字换成 ->/*.jsonl`，标题取 `custom-title` / `summary` / 第一条用户消息（只读前 256KB）。记忆在同目录的 `memory/`。
 - Codex 对话：同时列出项目目录和上一级目录的（常见 `E:\linnan` 与 `E:\linnan\linnan` 分开）。
 
+## 执行交接（与讨论状态机分开）
+
+`handoff.json` 保存在对应 room 目录中，事件为 `handoff`，不把执行结果混入讨论的消息转发。状态为 `draft → running → reviewing → ready → merged`，另有 `failed / cancelled / discarded`。讨论已完成且无人发言时才能确认任务卡。卡片直接带入最终结论（优先定稿）、复核和约束，用户编辑六个字段；不额外调用模型猜测验收标准。
+
+- `start({confirmed:true,...})` 冻结任务卡、来源消息 ID、事实卡版本、双方模型、源分支和 HEAD。来源变化时需 `saveCard({regenerate:true})` 重建草稿。
+- 源 Git 工作区必须干净、有初始提交且不含子模块。创建系统临时目录下的专属 worktree 与 `codex/roundtable-<UUID>` 分支。调用执行方一次，再由宿主保存提交，另一方只读审查完整 diff；超过 120000 字符的 diff 不截断后冒充完整审查，而是停止并保留提交。
+- Codex 使用独立 app-server、新线程、`workspaceWrite` 单工作区沙盒，禁止网络和临时目录扩写；默认讨论及复核仍为只读。Windows 默认执行入口为 `E:\codex-tools\bin\codex.exe`。
+- Claude 执行仍只有 Read/Grep/Glob，只生成文件变更 JSON，由宿主预检所有路径后落盘。支持最多 100 个、合计 4MiB 的 UTF-8 文本文件新增/覆盖；拒绝目录穿越、符号/硬链接、Git 元数据和常见凭证/工具配置路径。不支持删除、二进制或运行测试，报告明确注明。执行及复核不加载项目设置，关闭可禁用的 hooks/skills；管理员强制策略属于机器配置边界。
+- 整个交接默认 15 分钟（可选 1–60），无自动多轮修复。取消、超时和正常关闭会中断并释放专属连接器；服务重启把活动交接标为失败，不自动重跑。Windows 强杀宿主可能留下子进程，不能视为正常关闭清理的保证。
+- `ready` 仅表示复核完成，不表示复核没有发现问题。`merge({confirmed:true,commit})` 绑定当前完整提交 ID，复核后再次检查工作区、分支、差异哈希；原分支或 HEAD 改变则拒绝自动整合。只运行 `merge --ff-only --no-overwrite-ignore`，不推送；宿主 Git 操作禁用 hooks。
+- 合并或放弃后只移除归属和路径可验证、没有链接、没有未提交/忽略文件的任务工作区，不强制删除。已有分支、报告和日志保留；失败、取消或有产物时保留工作区并显示原因。源目录和桌面端后台不清理。
+
+`ROUNDTABLE_ROOMS_DIR` 可指定独立记录目录，用于本地验收时隔离数据和讨论 app-server PID 文件；正常启动仍使用项目内 `rooms/`。
+
 ## HTTP API（`server.js`）
 
 | 方法 | 路径 | 说明 |
@@ -120,8 +138,10 @@ done：自由问答，只回应用户新消息
 | GET | `/api/rooms/:id/events` | SSE：`snapshot` / `msg` / `delta` / `activity` / `state` |
 | GET | `/api/rooms/:id/transcript` | 下载 Markdown 记录 |
 | POST | `/api/rooms/:id/<动作>` | `message` `pause` `resume` `interrupt` `finish` `stop` `add-round` `models` `facts` `settings` `finalize` |
+| GET | `/api/rooms/:id/handoff` | 执行交接状态；已完成结论生成可编辑草稿，否则 null |
+| POST | `/api/rooms/:id/handoff/<动作>` | `card`（支持 regenerate）、`start`、`cancel`、`merge`、`discard` |
 
-访问限制：校验 `Host` 是否为本机地址加当前端口；POST 要求 Content-Type 包含 `application/json`。当前没有单独校验 `Origin`，也没有身份鉴权，不能把 Host 检查描述成完整的跨站访问防护。
+访问限制：校验 `Host` 是否为本机地址加当前端口；POST 要求 Content-Type 包含 `application/json`。新增的交接写入接口另校验网页 Origin 与 Host 同源；其他接口仍没有单独校验 Origin。没有身份鉴权，不能把 Host 检查描述成完整的跨站访问防护。
 
 ## 不能破坏的规则
 
@@ -133,6 +153,7 @@ done：自由问答，只回应用户新消息
 6. 会话按**固定 ID** 恢复，不用"最近一次"，避免多个讨论室串线。
 7. **不结束 Codex 桌面端的进程**。
 8. 启动 Claude 前**清理桌面版注入的环境变量**。
+9. **执行权限不回流到讨论**：交接使用全新会话与独立工作区，合并必须绑定用户看到的已审查提交。
 
 ## 踩过的坑
 
@@ -147,6 +168,9 @@ done：自由问答，只回应用户新消息
 ## 测试
 
 - `node --test test/room.test.js`：模拟测试，覆盖独立阶段失败/打断、初始化期间停止、对话被占用、提前收敛条件、定稿、约束卡版本、发言上限、探索模式、送达状态。
-- 当前 12 项模拟测试没有直接覆盖 Claude 的 urgent 打断重来、Codex steer 成功路径或 `finish()` 中途叫停；约束卡更新测试断言的是 Claude 一侧，不是双方更新行为的完整验证。
+- 当前 24 项讨论模拟测试直接覆盖 Claude urgent 两阶段重来、Codex steer 成功/失败/迟到及重送、finish 两阶段与旧回执竞争、双方约束卡更新/清空。
+- `node --test test/handoff.test.js`：临时真实 Git 仓库配模拟执行器，覆盖全生命周期、源目录保护、漂移、取消/超时/重启、明确提交确认、忽略文件碰撞、hooks 禁用和清理。
+- `node --test test/execution-agents.test.js`：只读默认、写入沙盒参数、受限文本落盘与路径/链接拒绝、取消和自有进程释放。
+- `npm test` 运行上述三组，不调用真实模型。
 - `node smoke-test.js`：真实冒烟，消耗极少额度。Claude/Codex 升级后跑一次能发现行为变化。
 - 界面改动：启动服务后在浏览器里实际点一遍；真实讨论尽量用 Haiku / 低强度省额度。

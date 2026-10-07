@@ -8,6 +8,9 @@ let current = null; // { id, state, msgs: Map }
 let es = null;
 let target = 'all';
 
+// 执行交接独立加载，避免给讨论消息渲染增加状态。
+const handoffUI = import('/handoff.js').then(({ initHandoff }) => initHandoff({ api, getCurrent: () => current }));
+
 // ---------- API ----------
 async function api(path, body) {
   const opts = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
@@ -248,6 +251,7 @@ function modelLabel(who, v) {
 function openRoom(id) {
   es?.close();
   current = { id, state: null, msgs: new Map() };
+  handoffUI.then((ui) => ui.sync(current));
   try { localStorage.setItem('roundtable:last', id); } catch {}
   $('#emptyState').classList.add('hidden');
   $('#menuBtn2').classList.add('hidden');
@@ -272,6 +276,8 @@ function handleEvent(ev) {
       for (const m of messages) upsertMsg(m, false);
       current.state = null;
       setState(state);
+      // 重连可能错过交接完成事件，重新读取独立状态；保留未保存的任务卡编辑。
+      handoffUI.then((ui) => ui.refresh());
       scrollToBottom(true);
       break;
     }
@@ -293,6 +299,11 @@ function handleEvent(ev) {
     case 'state':
       setState(ev.state);
       break;
+    case 'handoff': {
+      const roomId = current.id;
+      handoffUI.then((ui) => ui.update(roomId, ev.handoff));
+      break;
+    }
   }
 }
 
@@ -300,6 +311,7 @@ function handleEvent(ev) {
 function setState(s) {
   const prev = current.state;
   current.state = s;
+  handoffUI.then((ui) => ui.sync(current));
   $('#roomTopic').textContent = s.topic;
   $('#roomTopic').title = s.topic;
   document.title = `${s.topic} · 圆桌讨论室`;

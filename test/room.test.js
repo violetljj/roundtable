@@ -33,6 +33,50 @@ function makeRoom(agents, opts = {}, ctx = {}) {
   return Room.create({ topic: '测试主题', maxRounds: 1, ...opts }, { roomsDir, agentFactory: () => agents, ...ctx });
 }
 
+// 手动结束发言和 steer，应对网络回执与生成结束先后顺序不同的情况。
+function controlledAgent(name) {
+  const agent = { name, prompts: [], turns: [], steers: [], interrupts: 0 };
+  agent.send = (prompt, cb) => {
+    agent.prompts.push(prompt);
+    return new Promise((resolve) => {
+      const turn = {
+        finish(status = 'completed', text = `${name} 完整回答\n【状态】继续`) {
+          if (turn.done) return;
+          turn.done = true;
+          if (status === 'completed') cb.onDelta?.(text);
+          resolve({ status, text, error: status === 'failed' ? '模拟失败' : undefined });
+        },
+      };
+      agent.turns.push(turn);
+      cb.onDelta?.(`${name} 未完成片段\n`);
+    });
+  };
+  agent.interrupt = () => { agent.interrupts++; agent.turns.at(-1)?.finish('interrupted', ''); };
+  agent.steer = (prompt) => new Promise((resolve, reject) => agent.steers.push({ prompt, resolve, reject }));
+  return agent;
+}
+
+async function controlledRoom(t, opts = {}) {
+  const claude = controlledAgent('claude');
+  const codex = controlledAgent('codex');
+  const room = makeRoom({ claude, codex }, { maxTurns: 0, ...opts });
+  t.after(async () => {
+    room.stop();
+    await waitFor(() => !room.pumping);
+    clearTimeout(room.saveTimer);
+    fs.rmSync(path.dirname(room.dir), { recursive: true });
+  });
+  room.start();
+  await waitFor(() => claude.turns.length === 1 && codex.turns.length === 1);
+  return { room, claude, codex };
+}
+
+async function enterDiscussion({ room, claude, codex }) {
+  claude.turns[0].finish('completed', 'CLAUDE_SECRET\n【状态】继续');
+  codex.turns[0].finish('completed', 'CODEX_SECRET\n【状态】继续');
+  await waitFor(() => room.d.phase === 'discussion' && room.speaking.size === 1);
+}
+
 test('复核结论识别', () => {
   assert.equal(reviewHasCorrections('【复核】无异议\n最重要的是先冻结参数。'), false);
   assert.equal(reviewHasCorrections('【复核】有更正\n1. 我没有建议登记 ToF 任务。'), true);
@@ -252,4 +296,166 @@ test('还有未读的用户插话时不提前收敛', async () => {
   const sawUser = claude.prompts.some((p) => p.includes('请再考虑成本') && p.includes('交叉讨论'));
   assert.equal(sawUser, true);
   room.stop();
+});
+
+for (const phase of ['independent', 'discussion']) {
+  test(`Claude 立即纠正：${phase} 打断重来，补充重送且半截内容不外传`, async (t) => {
+    const ctx = await controlledRoom(t);
+    const { room, claude, codex } = ctx;
+    if (phase === 'discussion') await enterDiscussion(ctx);
+    else {
+      codex.turns[0].finish('completed', 'CODEX_SECRET');
+      await waitFor(() => !room.speaking.has('codex'));
+    }
+    const original = claude.turns.length;
+    const beforeRound = room.d.round;
+    room.userMessage('预算只能用一天', 'claude', true);
+    const user = room.d.messages.find((m) => m.from === 'user');
+    await waitFor(() => claude.turns.length === original + 1);
+    assert.equal(claude.interrupts, 1);
+    assert.ok(claude.prompts.at(-1).includes('预算只能用一天'));
+    assert.ok(claude.prompts.at(-1).includes('你上一轮的发言被打断了'));
+    assert.equal(user.seenBy.claude, true);
+    assert.equal(user.answeredBy?.claude, undefined);
+    assert.equal(room.d.round, beforeRound);
+    assert.equal(room.d.messages.filter((m) => m.from === 'claude' && m.status === 'interrupted').length, 1);
+    if (phase === 'independent') {
+      assert.ok(!claude.prompts.at(-1).includes('CODEX_SECRET'));
+    }
+    claude.turns.at(-1).finish('completed', '修正后的完整方案');
+    await waitFor(() => user.answeredBy?.claude);
+    // 独立阶段接下来仍是 Claude，完成它才能轮到 Codex。
+    if (phase === 'independent') {
+      await waitFor(() => claude.turns.length === original + 2);
+      claude.turns.at(-1).finish();
+    }
+    await waitFor(() => codex.turns.length === 2);
+    assert.ok(!codex.prompts.at(-1).includes('claude 未完成片段'));
+    assert.ok(codex.prompts.at(-1).includes('修正后的完整方案'));
+  });
+}
+
+test('Codex steer 成功：当前发言结束才算回应，打断则重送', async (t) => {
+  const { room, codex } = await controlledRoom(t);
+  room.userMessage('立即改用方案 B', 'codex', true);
+  const user = room.d.messages.find((m) => m.from === 'user');
+  assert.equal(user.seenBy.codex, false);
+  assert.ok(codex.steers[0].prompt.includes('【用户】（对你，紧急纠正）'));
+  codex.steers[0].resolve(true);
+  await waitFor(() => user.seenBy.codex);
+  assert.equal(user.answeredBy?.codex, undefined);
+  assert.equal(codex.interrupts, 0);
+  room.interrupt();
+  await waitFor(() => !room.pumping);
+  assert.equal(user.seenBy.codex, false);
+  assert.equal(user.answeredBy?.codex, undefined);
+  room.resume();
+  await waitFor(() => codex.turns.length === 2);
+  assert.ok(codex.prompts[1].includes('立即改用方案 B'));
+  codex.turns[1].finish();
+  await waitFor(() => user.answeredBy?.codex);
+});
+
+test('Codex steer 成功：完整发言将纠正标为已回应', async (t) => {
+  const { room, codex } = await controlledRoom(t);
+  room.userMessage('补上成本', 'codex', true);
+  const user = room.d.messages.find((m) => m.from === 'user');
+  codex.steers[0].resolve(true);
+  await waitFor(() => user.seenBy.codex);
+  codex.turns[0].finish();
+  await waitFor(() => user.answeredBy?.codex);
+  assert.equal(codex.turns.length, 1);
+});
+
+for (const result of ['false', 'reject', 'late-success']) {
+  test(`Codex steer ${result}：未确认送达的纠正由后续发言接收`, async (t) => {
+    const { room, claude, codex } = await controlledRoom(t);
+    room.userMessage('不可遗漏的纠正', 'codex', true);
+    const user = room.d.messages.find((m) => m.from === 'user');
+    if (result === 'late-success') {
+      codex.turns[0].finish();
+      await waitFor(() => !room.speaking.has('codex'));
+      codex.steers[0].resolve(true);
+    } else if (result === 'false') codex.steers[0].resolve(false);
+    else codex.steers[0].reject(new Error('连接断开'));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(user.seenBy.codex, false);
+    assert.equal(user.answeredBy?.codex, undefined);
+    if (result !== 'late-success') codex.turns[0].finish();
+    claude.turns[0].finish();
+    await waitFor(() => codex.turns.length === 2);
+    assert.ok(codex.prompts[1].includes('不可遗漏的纠正'));
+    codex.turns[1].finish();
+    await waitFor(() => user.answeredBy?.codex);
+  });
+}
+
+for (const phase of ['independent', 'discussion']) {
+  test(`中途总结 ${phase}：打断后只运行总结与复核`, async (t) => {
+    const ctx = await controlledRoom(t);
+    const { room, claude, codex } = ctx;
+    if (phase === 'discussion') await enterDiscussion(ctx);
+    const count = claude.turns.length + codex.turns.length;
+    room.finish();
+    await waitFor(() => room.d.phase === 'summary' && claude.turns.length + codex.turns.length > count);
+    const summarizer = room.d.summarizer === 'claude' ? claude : codex;
+    const reviewer = summarizer === claude ? codex : claude;
+    assert.ok(summarizer.prompts.at(-1).includes('【阶段】总结。'));
+    assert.ok(!summarizer.prompts.at(-1).includes(`${reviewer.name} 未完成片段`));
+    summarizer.turns.at(-1).finish('completed', '## 共识\n依据已完成内容总结');
+    await waitFor(() => room.d.phase === 'review' && room.speaking.has(reviewer.name));
+    reviewer.turns.at(-1).finish('completed', '【复核】无异议');
+    await waitFor(() => room.d.phase === 'done' && room.d.status === 'waiting');
+    assert.equal(claude.turns.length + codex.turns.length, count + 2);
+    assert.equal(room.d.messages.filter((m) => m.kind === 'summary').length, 1);
+    assert.equal(room.d.messages.filter((m) => m.kind === 'review').length, 1);
+  });
+}
+
+for (const result of ['completed', 'failed']) {
+  test(`中途总结与旧发言 ${result} 回执竞争：旧阶段不能暂停总结`, async (t) => {
+    const ctx = await controlledRoom(t);
+    const { room, claude, codex } = ctx;
+    await enterDiscussion(ctx);
+    claude.interrupt = () => { claude.interrupts++; };
+    room.finish();
+    claude.turns.at(-1).finish(result, '【问用户】还继续吗？');
+    await waitFor(() => !room.pumping || room.speaking.has('codex'));
+    assert.equal(room.d.phase, 'summary');
+    assert.equal(room.d.status, 'running');
+    assert.ok(codex.prompts.at(-1).includes('【阶段】总结。'));
+  });
+}
+
+test('约束卡更新和清空：双方完成新版本前不得收敛', async (t) => {
+  const ctx = await controlledRoom(t, { background: '旧约束', maxRounds: 3 });
+  const { room, claude, codex } = ctx;
+  await enterDiscussion(ctx);
+  assert.deepEqual(room.d.factsSeen, { claude: 1, codex: 1 });
+  room.updateFacts('新约束');
+  claude.turns[1].finish('completed', '【状态】可以收敛');
+  await waitFor(() => codex.turns.length === 2);
+  assert.ok(codex.prompts[1].includes('v1 → v2，旧版本作废'));
+  assert.ok(codex.prompts[1].includes('旧约束') && codex.prompts[1].includes('新约束'));
+  codex.turns[1].finish('completed', '【状态】可以收敛');
+  await waitFor(() => claude.turns.length === 3);
+  assert.equal(room.d.phase, 'discussion');
+  assert.ok(claude.prompts[2].includes('v1 → v2，旧版本作废'));
+  claude.turns[2].finish('completed', '【状态】继续');
+  // 发言完整结束后，双方才算确认收到 v2。
+  await waitFor(() => room.d.factsSeen.claude === 2 && room.d.factsSeen.codex === 2);
+  room.pause();
+  const speaking = [...room.speaking.keys()][0];
+  if (speaking) ctx[speaking].turns.at(-1).finish('completed', '阶段完成');
+  await waitFor(() => !room.pumping);
+  room.updateFacts('');
+  const counts = { claude: claude.turns.length, codex: codex.turns.length };
+  room.resume();
+  await waitFor(() => claude.turns.length > counts.claude);
+  assert.ok(claude.prompts.at(-1).includes('约束与事实卡已被用户清空（v3），之前的版本作废'));
+  claude.turns.at(-1).finish();
+  await waitFor(() => codex.turns.length > counts.codex);
+  assert.ok(codex.prompts.at(-1).includes('约束与事实卡已被用户清空（v3），之前的版本作废'));
+  codex.turns.at(-1).finish();
+  await waitFor(() => room.d.factsSeen.claude === 3 && room.d.factsSeen.codex === 3);
 });
