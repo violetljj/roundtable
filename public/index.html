@@ -48,6 +48,9 @@
           <h2 id="roomTopic"></h2>
           <div class="room-meta">
             <span class="pill" id="phasePill"></span>
+            <span class="pill mode" id="modePill"></span>
+            <button class="model-chip facts" id="factsChip" title="查看或修改约束与事实卡"></button>
+            <button class="model-chip usage" id="usageChip" title="本场用量与上限设置"></button>
             <button class="model-chip claude" id="chipClaude" title="点击切换 Claude 的模型和推理强度"></button>
             <button class="model-chip codex" id="chipCodex" title="点击切换 Codex 的模型和推理强度"></button>
             <span class="speaking" id="speaking"></span>
@@ -96,8 +99,14 @@
       <textarea name="topic" rows="3" required placeholder="例如：登录模块要不要拆成独立服务？"></textarea>
     </label>
     <button type="button" class="link" id="fillExample">填入示例话题</button>
-    <label>背景信息（可选）
-      <textarea name="background" rows="3" placeholder="约束、现状、你已经知道的事……"></textarea>
+    <div class="mode-pick" role="radiogroup" aria-label="讨论模式">
+      <label><input type="radio" name="mode" value="decide" checked><b>做决定</b><span>比较少量方案，说清代价和选择条件，形成推荐</span></label>
+      <label><input type="radio" name="mode" value="brainstorm"><b>探索想法</b><span>各自提不同思路、交叉组合，不急于收敛</span></label>
+      <label><input type="radio" name="mode" value="review"><b>方案审查</b><span>审查你已有的方案，找缺口、反例和风险</span></label>
+    </div>
+    <label>约束与事实卡（可选）
+      <textarea name="background" rows="4" placeholder="当前目标、必须遵守的约束、已经核实的事实……&#10;例：只做不需要新采集数据、一个人两周内能完成的事。"></textarea>
+      <span class="fine">固定附在双方每一次发言的开头，以它为准。讨论中可以随时修改，双方会收到"旧版本作废"的更新。</span>
     </label>
     <label>项目
       <select id="projectSelect" aria-label="选择项目"><option value="">加载中…</option></select>
@@ -115,7 +124,7 @@
       </label>
     </div>
     <p class="fine">带入的是对话的一份副本：讨论室里的 Claude / Codex 会记得那次对话的内容，桌面端的原对话不受影响。</p>
-    <div class="grid2">
+    <div class="grid3">
       <label>讨论轮数
         <select name="maxRounds">
           <option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option>
@@ -125,6 +134,11 @@
         <select name="firstSpeaker">
           <option value="claude">Claude</option>
           <option value="codex">Codex</option>
+        </select>
+      </label>
+      <label>本场发言上限
+        <select name="maxTurns">
+          <option value="10">10 次</option><option value="20" selected>20 次</option><option value="40">40 次</option><option value="0">不限</option>
         </select>
       </label>
     </div>
@@ -146,6 +160,40 @@
     <div class="dialog-actions">
       <button type="button" class="btn ghost" id="cancelModels">取消</button>
       <button type="submit" class="btn primary">应用</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="factsDialog">
+  <form method="dialog" id="factsForm">
+    <h3>约束与事实卡 <span class="ver" id="factsVer"></span></h3>
+    <p class="fine">固定附在双方每一次发言的开头，与旧对话、记忆或之前的说法冲突时以它为准。保存后版本号 +1，双方下一次发言时会收到新旧两个版本，明确旧版本作废。</p>
+    <textarea id="factsText" rows="9" aria-label="约束与事实卡内容" placeholder="当前目标：……&#10;最新约束：……&#10;已核实的事实：……（注明来源，比如文件路径）&#10;待核实的说法：……"></textarea>
+    <details class="history" id="factsHistory"><summary>历史版本</summary><div></div></details>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="cancelFacts">取消</button>
+      <button type="submit" class="btn primary">保存为新版本</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="usageDialog">
+  <form method="dialog" id="usageForm">
+    <h3>本场用量与上限</h3>
+    <div class="usage-table" id="usageTable"></div>
+    <p class="fine">token 数来自 Claude 命令行和 Codex 的报告。"输入"包含读缓存的部分，读缓存比新输入便宜得多。</p>
+    <div class="grid2">
+      <label>本场发言上限（0 = 不限）
+        <input type="number" min="0" max="200" id="setMaxTurns">
+      </label>
+      <label>讨论轮数
+        <input type="number" min="1" max="20" id="setMaxRounds">
+      </label>
+    </div>
+    <p class="fine">达到发言上限时讨论会暂停；总结、复核、定稿和你主动提的问题不受限制。</p>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" id="cancelUsage">关闭</button>
+      <button type="submit" class="btn primary">保存设置</button>
     </div>
   </form>
 </dialog>

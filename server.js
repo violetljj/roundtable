@@ -212,6 +212,8 @@ const server = http.createServer(async (req, res) => {
         case 'stop': room.stop(); break;
         case 'add-round': room.addRound(); break;
         case 'models': room.updateModels(body); break;
+        case 'facts': room.updateFacts(body.text); break;
+        case 'settings': room.updateSettings(body); break;
         case 'finalize': if (!room.finalize()) return send(res, 400, { error: '这场讨论现在不能生成定稿（需要已结束、有复核、还没有定稿）' }); break;
         default: return send(res, 404, { error: 'unknown action' });
       }

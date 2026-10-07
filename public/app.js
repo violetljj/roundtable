@@ -309,6 +309,13 @@ function setState(s) {
     $('#chipClaude').textContent = modelLabel('claude', s.models.claude);
     $('#chipCodex').textContent = modelLabel('codex', s.models.codex);
   }
+  $('#modePill').textContent = MODE_NAMES[s.mode] ?? '做决定';
+  const f = s.facts ?? { version: 0, text: '' };
+  $('#factsChip').textContent = f.text ? `约束卡 v${f.version}` : '＋ 约束卡';
+  $('#factsChip').classList.toggle('empty', !f.text);
+  const turns = (s.usage?.claude.turns ?? 0) + (s.usage?.codex.turns ?? 0);
+  $('#usageChip').textContent = `本场 ${turns}${s.maxTurns ? '/' + s.maxTurns : ''} 次 · ${fmtDuration(Date.now() - s.createdAt)}`;
+  if ($('#usageDialog').open) renderUsage(s);
   // 一次发言结束后，额度会变化
   if (prev && prev.speaking.length > s.speaking.length) setTimeout(loadStatus, 1500);
 
@@ -348,6 +355,77 @@ function updateHint() {
   else if (s && s.status !== 'running') hint = '发送后讨论会继续';
   if (target !== 'all') hint = `${NAMES[target]} 会优先回答你。` + hint;
   $('#composerHint').textContent = hint;
+}
+
+// ---------- 模式、约束卡、本场用量 ----------
+const MODE_NAMES = { decide: '做决定', brainstorm: '探索想法', review: '方案审查' };
+
+function fmtDuration(ms) {
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `${m} 分钟`;
+  if (m < 1440) return `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
+  return `${Math.floor(m / 1440)} 天`;
+}
+
+function fmtTokens(n) {
+  if (!n) return '0';
+  return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
+}
+
+function renderUsage(s) {
+  const u = s.usage;
+  const row = (who) => {
+    const x = u[who];
+    return `<span>${NAMES[who]}</span><span class="n">${x.turns}</span><span class="n">${fmtTokens(x.input)}</span><span class="n opt">${fmtTokens(x.cached)}</span><span class="n">${fmtTokens(x.output)}</span><span class="n opt">${fmtDuration(x.ms)}</span>`;
+  };
+  $('#usageTable').innerHTML =
+    '<span class="h"></span><span class="h n">发言</span><span class="h n">输入</span><span class="h n opt">其中缓存</span><span class="h n">输出</span><span class="h n opt">耗时</span>' +
+    row('claude') + row('codex');
+}
+
+$('#factsChip').onclick = () => {
+  const s = current?.state;
+  if (!s) return;
+  const f = s.facts ?? { version: 0, text: '', history: [] };
+  $('#factsVer').textContent = f.version ? `当前 v${f.version}` : '（还没有）';
+  $('#factsText').value = f.text;
+  const hist = $('#factsHistory');
+  hist.classList.toggle('hidden', !f.history?.length);
+  hist.querySelector('div').innerHTML = (f.history ?? []).slice().reverse()
+    .map((h) => `<div class="h-item"><b>v${h.version}</b>（已作废）\n${esc(h.text || '（空）')}</div>`).join('');
+  $('#factsDialog').showModal();
+  $('#factsText').focus();
+};
+$('#cancelFacts').onclick = () => $('#factsDialog').close();
+$('#factsForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  $('#factsDialog').close();
+  api(`/api/rooms/${current.id}/facts`, { text: $('#factsText').value }).catch((err) => alert(err.message));
+});
+
+$('#usageChip').onclick = () => {
+  const s = current?.state;
+  if (!s) return;
+  renderUsage(s);
+  $('#setMaxTurns').value = s.maxTurns ?? 0;
+  $('#setMaxRounds').value = s.maxRounds;
+  $('#usageDialog').showModal();
+};
+$('#cancelUsage').onclick = () => $('#usageDialog').close();
+$('#usageForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  $('#usageDialog').close();
+  api(`/api/rooms/${current.id}/settings`, { maxTurns: $('#setMaxTurns').value, maxRounds: $('#setMaxRounds').value }).catch((err) => alert(err.message));
+});
+
+// 你的插话是否已经送到、对方是否已经回应（"已送达"不等于"已理解"）
+function deliveryHtml(m) {
+  const chip = (who) => {
+    if (m.answeredBy?.[who]) return `<span class="done" title="${NAMES[who]} 已经在一次完整发言里看到并回应">${NAMES[who]} 已回应</span>`;
+    if (m.seenBy?.[who]) return `<span class="seen" title="已经交给 ${NAMES[who]}，它正在处理或还没说完">已送达 ${NAMES[who]}</span>`;
+    return `<span title="排队中，${NAMES[who]} 下一次发言时会收到">等待送达 ${NAMES[who]}</span>`;
+  };
+  return `<div class="delivery">${chip('claude')}${chip('codex')}</div>`;
 }
 
 // ---------- 消息 ----------
@@ -423,6 +501,7 @@ function renderMsg(m) {
   else if (m.status === 'streaming') body.innerHTML = `<span class="waiting">${m.activity.length ? '' : '正在思考…'}</span>`;
   else if (m.error) body.textContent = m.error;
   if (m.status === 'streaming') (body.lastElementChild ?? body).classList.add('caret');
+  if (m.from === 'user') el.querySelector('.bubble').insertAdjacentHTML('beforeend', deliveryHtml(m));
   if (['summary', 'review', 'final'].includes(m.kind) && m.status === 'complete') {
     const bubble = el.querySelector('.bubble');
     bubble.insertAdjacentHTML('beforeend', `<button class="btn copy-btn" data-copy="${m.id}" title="有定稿时复制定稿，否则复制总结和复核更正，可以粘贴到 Claude 或 Codex 桌面端继续推进">复制讨论结论</button>`);
@@ -653,6 +732,8 @@ $('#newForm').addEventListener('submit', async (e) => {
     forkFrom: { claude: $('#forkClaude').value || null, codex: $('#forkCodex').value || null },
     maxRounds: f.maxRounds.value,
     firstSpeaker: f.firstSpeaker.value,
+    mode: f.mode.value,
+    maxTurns: f.maxTurns.value,
     models: readPicker(document.querySelector('[data-picker="new"]')),
   };
   $('#createBtn').disabled = true;
@@ -744,6 +825,7 @@ $('#timeline').addEventListener('click', async (e) => {
   loadStatus();
   loadModels();
   setInterval(loadStatus, 60000);
+  setInterval(() => { if (current?.state) setState(current.state); }, 30000); // 刷新"本场时长"
   const rooms = await loadRooms();
   let last = null;
   try { last = localStorage.getItem('roundtable:last'); } catch {}
