@@ -55,6 +55,11 @@ test('Codex：钩子和电脑操控功能始终关闭；插件开关整体控制
   assert.ok(on.join(' ').includes('--disable hooks') && on.join(' ').includes('--disable computer_use'));
   assert.ok(!on.join(' ').includes('--disable plugins'));
   assert.ok(on.includes('web_search="live"') && on.some((a) => a.startsWith('mcp_servers.exa.url=')));
+  assert.ok(!on.some((a) => a.includes('EXA_API_KEY')));
+  const keyed = codexDiscussionArgs({}, { exaKey: true });
+  // key 只按环境变量名引用，不出现在参数里
+  assert.ok(keyed.includes('mcp_servers.exa.env_http_headers={ "x-api-key" = "EXA_API_KEY" }'));
+  assert.ok(!codexDiscussionArgs({ web: false }, { exaKey: true }).some((a) => a.includes('exa')));
   const off = codexDiscussionArgs(ALL_OFF);
   assert.ok(off.join(' ').includes('--disable plugins') && off.join(' ').includes('--disable apps'));
   assert.ok(off.includes('web_search="disabled"') && !off.some((a) => a.startsWith('mcp_servers.')));

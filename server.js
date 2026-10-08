@@ -8,7 +8,7 @@ import { CodexServer } from './lib/codex.js';
 import { findClaudeExe, claudeAccount, claudeEvents, probeClaudeLimits, CLAUDE_MODELS, CLAUDE_EFFORTS, prettyClaudeModel, resolveClaudeAlias, loadResolvedClaudeModels, resolvedClaudeModels } from './lib/claude.js';
 import { Room } from './lib/room.js';
 import { BEHAVIOR_PRESETS, loadBehaviorDefaults, saveBehaviorDefaults, inheritBehaviorCards } from './lib/behavior-cards.js';
-import { loadDiscussionTools, saveDiscussionTools, claudeDiscussionArgs, codexDiscussionArgs, findGitBash } from './lib/discussion-tools.js';
+import { loadDiscussionTools, saveDiscussionTools, claudeDiscussionArgs, codexDiscussionArgs, findGitBash, syncExaKey } from './lib/discussion-tools.js';
 import { listProjects, listClaudeSessions, projectContext } from './lib/desktop.js';
 import { Handoff } from './lib/handoff.js';
 import { createExecutionAgentFactory } from './lib/execution-agents.js';
@@ -45,7 +45,7 @@ process.title = '圆桌讨论室（关闭此窗口即停止）';
 
 const claudeExe = findClaudeExe();
 const gitBash = findGitBash();
-const codexServer = new CodexServer({ pidFile: path.join(ROOMS_DIR, '.codex-app-server.pid'), args: () => codexDiscussionArgs(loadDiscussionTools(ROOMS_DIR)) });
+const codexServer = new CodexServer({ pidFile: path.join(ROOMS_DIR, '.codex-app-server.pid'), args: () => codexDiscussionArgs(loadDiscussionTools(ROOMS_DIR), { exaKey: syncExaKey() }) });
 codexServer.on('stderr', (s) => { if (/error|panic/i.test(s)) console.error('[codex]', s.trim().slice(0, 300)); });
 // 写定稿交给当前额度用得更少的一方；数据过期或缺失时交给复核方
 function pickFinalizer(reviewer) {
@@ -202,7 +202,7 @@ const server = http.createServer(async (req, res) => {
         saveDiscussionTools(ROOMS_DIR, await readJson(req));
         codexServer.reconfigure(); // Claude 每次发言读取设置；Codex 要重启后台进程才生效
       } else if (req.method !== 'GET') return send(res, 405, { error: 'method not allowed' });
-      return send(res, 200, { settings: loadDiscussionTools(ROOMS_DIR), gitBash: !!gitBash });
+      return send(res, 200, { settings: loadDiscussionTools(ROOMS_DIR), gitBash: !!gitBash, exaKey: syncExaKey() });
     }
     if (req.method === 'GET' && url.pathname === '/api/projects') {
       if (!projectsCache || Date.now() - projectsCache.at > 60000) projectsCache = { at: Date.now(), list: await listProjects(codexServer) };

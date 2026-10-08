@@ -159,7 +159,7 @@ JSON 使用 `topic`、项目绝对路径 `cwd`、`background`，可选 `mode`、
 ## 安全
 
 讨论期间两边都**不改项目文件**。在「本场设置 → 讨论能力」可以放开以下能力，所有讨论共用，默认全开，下一次发言生效：
-- **联网查资料**：双方可网页搜索；Claude 还能读网页、用 exa，Codex 也接上 exa（未登录，可能限流）。
+- **联网查资料**：双方可网页搜索；Claude 还能读网页、用 exa，Codex 也接上 exa。Codex 的 exa 需要你自己设用户环境变量 `EXA_API_KEY`（`setx EXA_API_KEY <key>`，不用重新登录），没有时会被免费额度限流；插件全开时 Codex 另有 Exa 应用可用。
 - **Claude 跑只读命令**：只放行 `git log/show/diff/status/blame`、`ls`、`cat`、`head`、`tail`、`wc` 等；写文件、重定向、管道、`--output` 一律自动拒绝。需要 Git Bash。
 - **Claude 读 Claude Docs**：只能读取和检索，创建、编辑、删除会被拒绝。
 - **Codex 插件全开**：浏览器、文档、Slack、日历、电脑操控等插件都会加载。Codex 只能整体开关插件；它不弹窗确认，插件的对外操作（发消息、建日程、网页提交）发出去撤不回。项目文件仍是只读沙盒。

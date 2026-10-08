@@ -228,3 +228,8 @@ Claude 和 Codex 共用。**新记录追加到文件末尾**，按时间顺序�
 - 验证：新增 `test/discussion-tools.test.js` 7 项，连同 execution-agents、room、behavior-cards 共 52/52；七个改动脚本 `node --check` 通过。真实调用（haiku / gpt-6.1-sol，临时 git 仓库）：Claude 全开时 `git log` 成功、`cat a.txt > z.txt` 拒绝、`git diff HEAD --output=y.txt` 拒绝、WebSearch 和 Claude Docs guide 成功、未列入的 Docs 工具拒绝，目录里没有多出文件；Codex 网页搜索成功、`echo x > z.txt` 被沙盒拒绝、插件 MCP（cua_repl、node_repl、codex_apps 等）和 exa 已加载。`node smoke-test.js` 全部通过（默认路径未改，按旧规定跑的）。隔离服务（4698，临时目录）里打开抽屉，四项默认勾选，取消一项后接口返回已保存，浏览器无报错。
 - 没验证 / 遗留问题：没在真实讨论里看模型会不会滥用搜索、插件；Codex 插件的实际对外操作没有测（有意不测）。Claude 去掉 `--strict-mcp-config` 后每次发言会尝试连接所有插件 MCP（含未授权的），启动略慢；未列入的 MCP 工具仍出现在 Claude 的工具列表里，只是调用被拒。exa 对 Codex 未配 API key。用户的 4545 服务需重启、页面需刷新；重启后 Codex 后台按新参数启动（插件全开）。
 - 运行与清理：探测用临时仓库、4698 隔离服务及其临时目录、launch.json 临时配置都已清理，端口无监听；没有动用户服务和 Codex 桌面端进程。
+
+## 2026-10-09 · Codex 的 exa 用 EXA_API_KEY · Claude（用户提出）
+- 做了什么：Codex 讨论进程的 exa 在有 `EXA_API_KEY` 时通过 `env_http_headers` 带 `x-api-key` 请求头，参数里只有变量名。`syncExaKey()` 先看进程环境，没有再查 `HKCUEnvironment`，用户 setx 之后不必重新登录或重启圆桌（下次 Codex 后台启动时读取）。设置页在没有 key 时提示 Codex 的 exa 会限流。key 由用户自己用 setx 设置，代码和仓库里都没有 key。
+- 验证：`test/discussion-tools.test.js` 7/7（新增：没 key 不加请求头、有 key 只引用变量名、关联网时不接 exa）；`node --check` 通过。真实调用：设 key 之前，Codex 两次走 `exa/web_search_exa` 都返回免费额度限流；设 key 后同一工具返回正常结果。不带 key 的对照里 Codex 改用了插件自带的 `codex_apps/exa`，没有走我们接的 exa，所以对照不算干净。
+- 没验证 / 遗留问题：没测 key 失效或额度用完时的表现。插件全开时 Codex 本来就有 Exa 应用（codex_apps），和这里接的 exa 重复，没有去重。用户的 4545 服务需重启加载后端改动。
