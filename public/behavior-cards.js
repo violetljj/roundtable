@@ -63,7 +63,7 @@ export function initBehaviorCards({ api, getCurrent }) {
     const active = activeCards.length;
     const strengths = activeCards.filter((card) => card.kind === 'strength').length;
     $('#behaviorPreview').textContent = !settings.enabled ? '打开后，勾选的卡会作为“可能的倾向”提醒双方扬长避短，不是给模型下定论。规则来自你的经验，可以随时改。'
-      : active ? `${active} 张生效（长处 ${strengths} · 短处 ${active - strengths}）。长处卡让对方主动请教，短处卡对方只在确有争议时追问。`
+      : active ? `${active} 张生效（长处 ${strengths} · 短处 ${active - strengths}）。长处卡让对方主动请教，短处卡对方看到实际出现就直接指出。`
       : '没有卡片匹配当前型号。';
     renderPill(state);
     if (!editing) renderCards(state);
@@ -149,7 +149,7 @@ export function initBehaviorCards({ api, getCurrent }) {
       const other = NAMES[subject === 'claude' ? 'codex' : 'claude'];
       form.querySelector('.bcard-kind-hint').textContent = kind === 'strength'
         ? `遇到这类问题时，${other} 会先请 ${NAMES[subject]} 出方案或重点参考它的意见。`
-        : `${other} 只在 ${NAMES[subject]} 确实出现这种情况、而且有争议时追问。`;
+        : `${other} 看到 ${NAMES[subject]} 确实出现这种情况时会引用原话直接指出，${NAMES[subject]} 需先核对再回应，属实就承认改正。`;
       const state = getCurrent()?.state;
       const choices = [...new Set([...(catalog?.modelChoices?.[subject] ?? []), state ? modelIdOf(state, subject) : ''].filter(Boolean))];
       chips.replaceChildren(...choices.map((id) => {

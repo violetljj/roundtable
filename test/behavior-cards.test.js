@@ -102,8 +102,9 @@ test('同一条件动作双边可见，自律和条件性追问分开；无卡�
   const own = behaviorPrompt(data, 'codex'), peer = behaviorPrompt(data, 'claude');
   assert.ok(own.includes(data.behaviorCards.cards[0].text));
   assert.ok(peer.includes(data.behaviorCards.cards[0].text));
-  // 短处：本人留意、对方只在确有争议时追问；长处：本人多承担、对方主动请教
-  assert.ok(own.includes('出现这种情况时照做')); assert.ok(peer.includes('才追问'));
+  // 短处：对方实际看到就引用原话指出，本人被指出时核对、属实就承认；长处：本人多承担、对方主动请教
+  assert.ok(own.includes('出现这种情况时照做')); assert.ok(own.includes('直接承认并改正'));
+  assert.ok(peer.includes('引用原话')); assert.ok(peer.includes('没有出现就不提'));
   assert.ok(own.includes('主动多承担')); assert.ok(peer.includes('先请对方出方案'));
   assert.ok(own.includes('不代表你或对方一定有'));
   assert.ok(peer.includes('用户经验，尚未验证'));
