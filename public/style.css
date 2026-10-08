@@ -515,6 +515,9 @@ dialog::backdrop { background: rgba(20, 18, 15, .34); backdrop-filter: blur(2px)
 #newForm label.opt-check { display: flex; align-items: flex-start; gap: 9px; color: var(--text); font-size: 13.5px; cursor: pointer; }
 #newForm label.opt-check input { flex: none; width: auto; padding: 0; margin: 4px 0 0; accent-color: var(--text); box-shadow: none; }
 .opt-check .fine { display: block; margin-top: 2px; }
+.dtools { display: grid; gap: 10px; }
+.dtools label.opt-check { display: flex; align-items: flex-start; gap: 9px; font-size: 13.5px; cursor: pointer; }
+.dtools label.opt-check input { flex: none; margin: 4px 0 0; accent-color: var(--text); }
 #newForm .dialog-actions { position: sticky; bottom: 0; z-index: 1; background: var(--panel); padding: 16px 0 22px; margin-top: 0; border-top: 1px solid var(--line); }
 #newForm .dialog-actions > .fine { margin-right: auto; }
 #newForm .form-error:not(:empty) { padding-bottom: 20px; }

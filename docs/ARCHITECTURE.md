@@ -26,6 +26,7 @@
 | `lib/roundtable-client.js` / `scripts/roundtable.js` | 外部对话创建圆桌、有限等待、取得结果；技能入口在 `skills/roundtable` |
 | `lib/claude.js` | Claude 连接器：找 `claude.exe`、清理环境变量、流式 JSON 解析、会话新建/续接/复制、额度与型号上报 |
 | `lib/codex.js` | Codex 连接器：`CodexServer`（app-server 进程与 JSON-RPC）+ `CodexAgent`（单个对话） |
+| `lib/discussion-tools.js` / `public/discussion-tools.js` | 讨论能力（全局）：联网、Claude 只读命令、Claude Docs 只读、Codex 插件；拼装两边的启动参数 |
 | `lib/desktop.js` | 列出项目、Claude 已有对话、项目上下文（CLAUDE.md / AGENTS.md / 记忆数） |
 | `lib/handoff.js` | 独立的执行交接状态、任务卡、Git worktree、提交审查、确认合并与清理 |
 | `lib/execution-agents.js` | 全新执行/审查会话与自有进程释放；不复用讨论会话 |
@@ -230,9 +231,18 @@ done：自由问答，只回应用户新消息
 
 访问限制：校验 `Host` 是否为本机地址加当前端口；POST 要求 Content-Type 包含 `application/json`。交接、小实验、主张标注与定向核查写入接口另校验网页 Origin 与 Host 同源；其他接口仍没有单独校验 Origin。没有身份鉴权，不能把 Host 检查描述成完整的跨站访问防护。
 
+## 讨论能力（`lib/discussion-tools.js`）
+
+全局设置存 `rooms/.discussion-tools.json`，默认全开，所有讨论共用；网页在「本场设置 → 讨论能力」勾选即保存。
+
+- **Claude**：每次发言调用 `claudeDiscussionArgs()`，所以改设置下一次发言就生效。全关时参数与原来完全一致（`Read,Grep,Glob` + `--strict-mcp-config` + `default`）。放开时用 dontAsk 白名单：联网 = `WebSearch`、`WebFetch`、exa 插件；只读命令 = Git Bash 下的 `git log/show/diff/status/blame/ls-files/rev-parse`、`ls/cat/head/tail/wc/pwd` 前缀；Claude Docs 只放 `read/query/guide`。联网或 Docs 开时去掉 `--strict-mcp-config` 以加载插件 MCP，未列入白名单的 MCP 工具仍会被拒绝。
+- **只读命令的坑**（实测）：Windows 上默认命令工具是 PowerShell，其前缀规则在本机解析失败、永远不匹配，所以用 Git Bash（`CLAUDE_CODE_GIT_BASH_PATH`，由 `findGitBash()` 从 `where git` 推出；找不到就不开）。Claude Code 会把重定向、管道、`&&` 拼接按整条命令判定并拒绝；但前缀白名单挡不住参数中间的 `--output=文件`（git log/show/diff 都支持，实测会写文件），所以另加 `Bash(*--output*)`、`Bash(*--ext-diff*)` 拒绝规则。不放 `find`（-delete/-exec）、`rg`（--pre 执行命令）、`git grep`（-O 打开程序）、`git branch`（带参数建分支）。
+- **Codex**：app-server 是全局一个进程，启动参数由 `codexDiscussionArgs()` 给出；改设置后 `reconfigure()` 在没有发言进行时停掉进程，下次发言按新参数启动并按 ID 续接对话（有发言进行中就等它结束）。始终 `--disable hooks`、`--disable computer_use`；联网 = `web_search="live"` + exa（`mcp_servers.exa.url`，未登录，可能限流）。插件只能整体开关：逐个 `-c plugins."x".enabled=false` 实测不生效，而且插件全开会带上 config.toml 之外的运行时插件和 `cua_repl`（电脑操控）。用户明确选择插件全开。Codex 服务端发来的审批请求仍一律拒绝，但不少插件工具不经审批就能执行，对外操作不可撤回。`killLeftover()` 按 `--disable hooks`（旧版 `--disable plugins`）识别自己的进程。
+- 执行与实验：Claude 执行用 `isolateTools`，忽略讨论能力；Codex 执行/实验用独立的 `CodexServer`，仍是原来的全关参数。
+
 ## 不能破坏的规则
 
-1. **讨论期间只读**：靠工具配置保证（Claude `--tools Read,Grep,Glob` + `--strict-mcp-config`；Codex 只读沙盒 + 禁网 + 关插件 + 拒绝审批），不能只靠提示词。注意 Claude 的 `--allowedTools` 是"免确认"，不是白名单，限制工具要用 `--tools`。
+1. **讨论期间不改项目文件**：靠工具配置保证，不能只靠提示词。Claude 用 `--tools` 限定内置工具，放开能力时改用 `--permission-mode dontAsk` + `--allowedTools` 白名单（未列入的工具和命令自动拒绝）+ `--disallowedTools` 挡住参数中间的写出选项；`--allowedTools` 单独用只是"免确认"，必须配 dontAsk 才是白名单。Codex 只读沙盒 + 拒绝审批。联网、Codex 插件按全局「讨论能力」设置放开（见下文），执行与实验会话不受这些设置影响。
 2. **用户授权与材料分开**；用户消息传达指令，用户按钮触发的固定流程请求单独标明自动来源，不能扩大权限；对方发言和实验报告要标明"不是用户的指令"。
 3. **被打断的半截发言不转发**给对方。
 4. **独立提案互相看不到**，包括失败重试时。
@@ -264,5 +274,6 @@ done：自由问答，只回应用户新消息
 - `node --test test/execution-agents.test.js`：只读默认、写入沙盒参数、受限文本落盘与路径/链接拒绝、取消和自有进程释放。
 - `node --test test/discussion-quality.test.js test/discussion-api.test.js test/quality-flow.test.js test/experiment.test.js test/roundtable-client.test.js`：双版结论的新旧结果、实验回流/批准/取消/预算/来源保护、客户端 HTTP 与有限等待；不调用真实模型。
 - `npm test` 运行 package.json 列出的全部模拟与本地测试，不调用真实模型。
-- `node smoke-test.js`：真实冒烟，消耗极少额度。Claude/Codex 升级后跑一次能发现行为变化。
+- `node smoke-test.js`：真实冒烟，消耗极少额度，只覆盖默认参数下的启动、发言、打断、恢复。Claude/Codex 升级或改到这些路径时跑；只改工具参数时改做针对性真实调用。
+- `node --test test/discussion-tools.test.js`：讨论能力的参数拼装、默认值、执行会话不受影响、Codex 改设置后的重启时机。
 - 界面改动：启动服务后在浏览器里实际点一遍；真实讨论尽量用 Haiku / 低强度省额度。

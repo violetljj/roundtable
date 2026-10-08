@@ -2,6 +2,7 @@
 import { createRenderQueue } from './render-queue.js';
 import { initWorkspace } from './workspace-ui.js';
 import { initBehaviorCards, loadBehaviorCatalog } from './behavior-cards.js';
+import { initDiscussionTools } from './discussion-tools.js';
 
 const $ = (s) => document.querySelector(s);
 const NAMES = { claude: 'Claude', codex: 'Codex', user: '你', evidence: '实验记录' };
@@ -12,6 +13,7 @@ let es = null;
 let target = 'all';
 const workspaceUI = initWorkspace({ api, getCurrent: () => current, md });
 const behaviorUI = initBehaviorCards({ api, getCurrent: () => current });
+initDiscussionTools({ api });
 
 // 执行交接独立加载，避免给讨论消息渲染增加状态。
 const handoffUI = import('/handoff.js').then(({ initHandoff }) => initHandoff({ api, getCurrent: () => current }));
