@@ -1,6 +1,6 @@
 'use strict';
 
-export function initWorkspace({ api, getCurrent, md }) {
+export function initWorkspace({ api, getCurrent, md, openNew }) {
   const byId = (id) => document.getElementById(id);
   const discussionTab = byId('discussionTab');
   const resultTab = byId('resultTab');
@@ -11,6 +11,7 @@ export function initWorkspace({ api, getCurrent, md }) {
   const copyBrief = byId('resultCopyBrief');
   const copyFull = byId('resultCopyFull');
   const copyNext = byId('resultCopyNext');
+  const toDecide = byId('resultToDecide');
   const toolsDialog = byId('roomToolsDialog');
   const steps = [...byId('workflowSteps').querySelectorAll('[data-step]')];
   let roomId = null;
@@ -66,6 +67,7 @@ export function initWorkspace({ api, getCurrent, md }) {
     hide(copyNext, true);
     hide(copyBrief, true);
     hide(copyFull, true);
+    hide(toDecide, true);
     copyNext.disabled = copyBrief.disabled = copyFull.disabled = true;
   }
 
@@ -148,6 +150,8 @@ export function initWorkspace({ api, getCurrent, md }) {
     copyFull.disabled = !full;
     // 有推进版时它是主操作，三句话退为次要
     copyBrief.classList.toggle('primary', !result.next);
+    // 探索想法本身不收敛，下一步通常是在想法里做选择
+    hide(toDecide, getCurrent()?.state?.mode !== 'brainstorm');
   }
 
   async function refreshResult() {
@@ -240,6 +244,33 @@ export function initWorkspace({ api, getCurrent, md }) {
     ].join('\n');
   }
 
+  // 取完整版里「最值得先试」一节；模型没按标题写时退回整份完整版
+  function bestIdeas(full) {
+    const lines = full.split(/\r?\n/);
+    const start = lines.findIndex((line) => /^#{2,4}\s*最值得先试/.test(line));
+    if (start < 0) return full;
+    const level = lines[start].match(/^#+/)[0].length;
+    const end = lines.findIndex((line, index) => index > start && /^#+\s/.test(line) && line.match(/^#+/)[0].length <= level);
+    return lines.slice(start + 1, end < 0 ? undefined : end).join('\n').trim() || full;
+  }
+
+  function startDecide() {
+    if (!result?.ready || resultSignature !== stateSignature(getCurrent())) {
+      sync();
+      return;
+    }
+    const state = getCurrent().state;
+    openNew({
+      topic: `从上一场探索出的方向里选一个先做：${state.topic}`,
+      background: [
+        state.facts?.text,
+        `上一场「探索想法」结论里最值得先试的方向（已复核）：\n${bestIdeas(result.full || result.text || '')}`,
+      ].filter(Boolean).join('\n\n'),
+      mode: 'decide',
+      cwd: state.cwd,
+    });
+  }
+
   async function copy(kind) {
     if (!result?.ready || resultSignature !== stateSignature(getCurrent())) {
       sync();
@@ -269,6 +300,7 @@ export function initWorkspace({ api, getCurrent, md }) {
   copyNext.onclick = () => copy('next');
   copyBrief.onclick = () => copy('brief');
   copyFull.onclick = () => copy('full');
+  toDecide.onclick = startDecide;
   for (const tab of [discussionTab, resultTab]) {
     tab.addEventListener('keydown', (event) => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;

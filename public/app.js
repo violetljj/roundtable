@@ -11,7 +11,7 @@ const LETTER = { claude: 'C', codex: 'X', user: '你', evidence: '验' };
 let current = null; // { id, state, msgs: Map }
 let es = null;
 let target = 'all';
-const workspaceUI = initWorkspace({ api, getCurrent: () => current, md });
+const workspaceUI = initWorkspace({ api, getCurrent: () => current, md, openNew: (prefill) => openNewDialog(prefill) });
 const behaviorUI = initBehaviorCards({ api, getCurrent: () => current });
 initDiscussionTools({ api });
 
@@ -890,8 +890,19 @@ function autosize() {
   t.style.height = Math.min(t.scrollHeight, 200) + 'px';
 }
 
-async function openNewDialog() {
+// prefill：从结论页转入新讨论时预填议题、约束卡、模式和项目
+async function openNewDialog(prefill = null) {
+  if (prefill) {
+    const f = $('#newForm');
+    f.reset();
+    f.topic.value = prefill.topic;
+    f.background.value = prefill.background;
+    f.mode.value = prefill.mode;
+    pendingProject = prefill.cwd;
+    $('#contextOptions').open = true;
+  }
   $('#formError').textContent = '';
+  $('#modeDescription').textContent = MODE_DESCRIPTIONS[$('#newForm').mode.value];
   toggleSidebar(false);
   $('#newDialog').showModal();
   $('#newForm').topic.focus();
@@ -993,8 +1004,8 @@ $('#modelsForm').addEventListener('submit', (e) => {
   api(`/api/rooms/${current.id}/models`, body).catch((err) => alert(err.message));
 });
 
-$('#newRoomBtn').onclick = openNewDialog;
-$('#emptyNewBtn').onclick = openNewDialog;
+$('#newRoomBtn').onclick = () => openNewDialog();
+$('#emptyNewBtn').onclick = () => openNewDialog();
 $('#cancelNew').onclick = () => $('#newDialog').close();
 $('#fillExample').onclick = () => {
   const f = $('#newForm');
@@ -1003,11 +1014,11 @@ $('#fillExample').onclick = () => {
   $('#contextOptions').open = true;
 };
 const MODE_DESCRIPTIONS = {
-  decide: '比较方案与代价，形成有依据的推荐。',
-  brainstorm: '从不同角度打开思路，组合值得尝试的想法。',
-  review: '检查已有方案，找出缺口、反例与改进方向。',
-  paper: '独立审稿，再整理作者回应与补充证据清单。',
-  learn: '一方讲解、一方追问，用例子和反例检验理解。',
+  decide: '适合在几个选项之间拿不定主意：比较代价与条件，给出推荐。',
+  brainstorm: '适合还没有方向、想多要些思路：不急着收敛，讨论到设定轮数。',
+  review: '适合手里已经有方案、想找漏洞：按严重程度列问题，也指出站得住的部分。',
+  paper: '适合投稿前检查论文：双方独立审稿，再整理作者回应和补证据清单。',
+  learn: '适合学习陌生主题：一方讲解、一方追问，最后附理解检验。',
 };
 $('#newForm').addEventListener('change', (event) => {
   if (event.target.name === 'mode') $('#modeDescription').textContent = MODE_DESCRIPTIONS[event.target.value];
@@ -1034,7 +1045,6 @@ $('#newForm').addEventListener('submit', async (e) => {
     const { id } = await api('/api/rooms', body);
     $('#newDialog').close();
     f.reset();
-    $('#modeDescription').textContent = MODE_DESCRIPTIONS.decide;
     $('#contextOptions').open = $('#advancedOptions').open = false;
     openRoom(id);
   } catch (err) {
