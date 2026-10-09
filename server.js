@@ -17,7 +17,7 @@ import { Experiment } from './lib/experiment.js';
 import { roomResult, experimentAction, assertDiscussionAvailable } from './lib/discussion-api.js';
 import { createStatusCache } from './lib/status-cache.js';
 import { claimInstance, updateInstance, releaseInstance } from './lib/instance-lock.js';
-import { findAppBrowser, openAppWindow, launchInBackground } from './lib/app-window.js';
+import { findAppBrowser, openAppWindow, launchInBackground, appProfileDir } from './lib/app-window.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ROOMS_DIR = process.env.ROUNDTABLE_ROOMS_DIR ? path.resolve(process.env.ROUNDTABLE_ROOMS_DIR) : path.join(ROOT, 'rooms');
@@ -28,7 +28,7 @@ fs.mkdirSync(ROOMS_DIR, { recursive: true });
 
 // --app（启动脚本用）：服务转到后台，讨论室用独立窗口打开，窗口全部关掉即停止；找不到浏览器时退回前台运行
 const APP_BROWSER = process.argv.includes('--app') ? findAppBrowser() : null;
-const APP_PROFILE = path.join(ROOMS_DIR, '.app-window');
+const APP_PROFILE = appProfileDir();
 if (APP_BROWSER && !process.argv.includes('--background')) {
   process.exit(await launchInBackground({ script: fileURLToPath(import.meta.url), roomsDir: ROOMS_DIR, logFile: path.join(ROOMS_DIR, '.server.log') }));
 }
