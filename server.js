@@ -2,7 +2,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { exec } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { CodexServer } from './lib/codex.js';
 import { findClaudeExe, claudeAccount, claudeEvents, probeClaudeLimits, CLAUDE_MODELS, CLAUDE_EFFORTS, prettyClaudeModel, resolveClaudeAlias, loadResolvedClaudeModels, resolvedClaudeModels } from './lib/claude.js';
@@ -17,7 +16,7 @@ import { Experiment } from './lib/experiment.js';
 import { roomResult, experimentAction, assertDiscussionAvailable } from './lib/discussion-api.js';
 import { createStatusCache } from './lib/status-cache.js';
 import { claimInstance, updateInstance, releaseInstance } from './lib/instance-lock.js';
-import { findAppBrowser, openAppWindow, launchInBackground, appProfileDir } from './lib/app-window.js';
+import { openInBrowser, launchInBackground } from './lib/app-window.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ROOMS_DIR = process.env.ROUNDTABLE_ROOMS_DIR ? path.resolve(process.env.ROUNDTABLE_ROOMS_DIR) : path.join(ROOT, 'rooms');
@@ -26,10 +25,9 @@ const BASE_PORT = parseInt(process.env.ROUNDTABLE_PORT ?? '4545', 10);
 
 fs.mkdirSync(ROOMS_DIR, { recursive: true });
 
-// --app（启动脚本用）：服务转到后台，讨论室用独立窗口打开，窗口全部关掉即停止；找不到浏览器时退回前台运行
-const APP_BROWSER = process.argv.includes('--app') ? findAppBrowser() : null;
-const APP_PROFILE = appProfileDir();
-if (APP_BROWSER && !process.argv.includes('--background')) {
+// --app（启动脚本用）：服务转到后台，讨论室在默认浏览器的标签页里打开，页面全部关掉且没有讨论在进行时停止
+const APP_MODE = process.argv.includes('--app');
+if (APP_MODE && !process.argv.includes('--background')) {
   process.exit(await launchInBackground({ script: fileURLToPath(import.meta.url), roomsDir: ROOMS_DIR, logFile: path.join(ROOMS_DIR, '.server.log') }));
 }
 
@@ -44,8 +42,7 @@ try {
 if (existing) {
   const url = `http://127.0.0.1:${existing.port}`;
   console.log(`讨论室已经在运行：${url}，不再重复启动。`);
-  if (APP_BROWSER) openAppWindow(APP_BROWSER, url, APP_PROFILE);
-  else if (process.argv.includes('--open') || process.argv.includes('--app')) await new Promise((resolve) => exec(`start "" "${url}"`, resolve));
+  if (APP_MODE || process.argv.includes('--open')) await openInBrowser(url);
   process.exit(0);
 }
 process.on('exit', () => releaseInstance(ROOMS_DIR));
@@ -193,12 +190,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && !(req.headers['content-type'] ?? '').includes('application/json')) return send(res, 415, { error: 'json only' });
 
     // 应用窗口模式下，页面用一条常开连接表示"窗口还开着"
-    if (req.method === 'GET' && url.pathname === '/api/app-mode') return send(res, 200, { app: !!APP_BROWSER });
+    if (req.method === 'GET' && url.pathname === '/api/app-mode') return send(res, 200, { app: APP_MODE });
     if (req.method === 'GET' && url.pathname === '/api/presence') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
       res.write(': open\n\n');
-      windowOpened();
-      req.on('close', windowClosed);
+      pageOpened();
+      res.on('close', pageClosed);
       return;
     }
 
@@ -399,37 +396,44 @@ server.listen(port, '127.0.0.1', () => {
   updateInstance(ROOMS_DIR, { port });
   console.log(`讨论室已启动：${url}`);
   console.log(claudeExe ? `Claude 命令行：${claudeExe}` : '警告：找不到 Claude 命令行');
-  if (APP_BROWSER) {
-    console.log('关闭讨论室窗口即停止服务。');
-    const browser = openAppWindow(APP_BROWSER, url, APP_PROFILE);
-    // 页面还没连上就没了浏览器（启动失败或马上被关），没有窗口可以关，直接停
-    // （窗口并入已开着的同配置浏览器时进程也会马上退出，所以等页面一会儿）
-    browser.on('exit', () => setTimeout(() => { if (!windowSeen) shutdown(); }, 10000));
-    setTimeout(() => { if (!windowSeen) shutdown(); }, 120000);
-  } else console.log('关闭这个窗口即可停止服务。');
-  if (process.argv.includes('--open') && !APP_BROWSER) exec(`start "" "${url}"`);
+  if (APP_MODE) {
+    console.log('关闭讨论室页面即停止服务（有讨论在进行时等它结束）。');
+    openInBrowser(url);
+    // 一直没有页面连上（浏览器没打开或马上被关），后台服务没有入口可关，直接停
+    setTimeout(() => { if (!pageSeen) stopWhenIdle(0); }, 120000);
+  } else {
+    console.log('关闭这个窗口即可停止服务。');
+    if (process.argv.includes('--open')) openInBrowser(url);
+  }
   // 提前启动 Codex 后台，打开网页时不用等
   codexServer.start().then(() => getModels()).catch((e) => console.error('Codex 启动失败：', e.message));
   getStatus(); // 后台预热账号，页面不等待命令行查询。
 });
 
-// 按页面连接判断窗口是否还开着：刷新会短暂断开，所以全部断开 5 秒后才停
-let windowSeen = false;
-let windowCount = 0;
-let windowTimer = null;
-function windowOpened() {
-  windowSeen = true;
-  windowCount++;
-  clearTimeout(windowTimer);
+// 按页面连接判断讨论室是否还开着：刷新会短暂断开，所以全部断开 5 秒后才停。
+// 标签页可能被浏览器休眠或随手关掉，讨论、交接、实验还在进行时不打断，等它们结束再停。
+let pageSeen = false;
+let pageCount = 0;
+let pageTimer = null;
+const busy = () => [...rooms.values()].some((room) => room.d.status === 'running' || room.speaking.size
+  || ['running', 'reviewing'].includes(room.handoff?.d?.status) || room.experiment?.d?.status === 'running');
+function pageOpened() {
+  pageSeen = true;
+  pageCount++;
+  clearTimeout(pageTimer);
 }
-function windowClosed() {
-  windowCount--;
-  if (windowCount > 0) return;
-  windowTimer = setTimeout(() => {
-    if (windowCount > 0) return;
-    console.log('讨论室窗口已全部关闭，停止服务。');
+function pageClosed() {
+  pageCount--;
+  if (pageCount <= 0) stopWhenIdle(5000);
+}
+function stopWhenIdle(delay) {
+  clearTimeout(pageTimer);
+  pageTimer = setTimeout(() => {
+    if (pageCount > 0) return;
+    if (busy()) return stopWhenIdle(30000);
+    console.log('讨论室页面已全部关闭，停止服务。');
     shutdown();
-  }, 5000);
+  }, delay);
 }
 
 let stopping = false;

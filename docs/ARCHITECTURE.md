@@ -95,7 +95,7 @@ done：自由问答，只回应用户新消息
 
 同一个讨论记录目录只跑一份服务（`lib/instance-lock.js`）。两份会同时写 `rooms/`，后启动的一份还会按 `.codex-app-server.pid` 把前一份的 Codex app-server 当残留进程清理掉。启动时在创建 Codex 后台之前调用 `claimInstance`：`rooms/.server.json` 记着占用者 PID 和端口，占用者存活且 `/api/health` 应答就打开它并退出；刚启动还没写端口时最多等 15 秒；进程已不在或一直不应答（PID 被复用）按失效接管；锁文件用 `wx` 原子创建，同时启动只有一份成功。没有锁文件时还会在 4545–4555 里探测旧版服务。监听成功后写入实际端口，正常退出（含 Windows 关窗口的 SIGHUP）删除自己的锁；强杀留下的锁下次启动接管。`scripts/roundtable.js` 没给 `--url` 时读锁文件里的端口。
 
-应用窗口模式（`node server.js --app`，启动脚本用，`lib/app-window.js`）：前台进程把自己以 `--app --background` 重新启动为隐藏的后台进程（输出写 `rooms/.server.log`），等锁文件里的 PID 应答 `/api/health` 后退出，命令行窗口随之关闭；后台启动失败或 60 秒未就绪就打印日志、返回 1 让启动脚本停住。后台进程监听后用 Edge（没有则 Chrome）`--app` 和独立配置目录 `%LOCALAPPDATA%Roundtableapp-window` 打开窗口；已有服务时只再开一个窗口。窗口是否开着按页面连接判断：`public/app-window.js` 在 `/api/app-mode` 为真时常开 `/api/presence`，连接数归零 5 秒后（容许刷新）执行 `shutdown()`；页面从未连上而浏览器进程退出，或 2 分钟内没连上，也停止。`shutdown()` 先把各讨论延迟的写盘落盘。Edge 新建配置会自动登录 Windows 微软账号并同步浏览记录、密码等，所以配置目录放在项目外，不让讨论中的模型读到。两个浏览器都找不到时 `--app` 退回前台运行加默认浏览器。
+后台模式（`node server.js --app`，启动脚本用，`lib/app-window.js`）：前台进程把自己以 `--app --background` 重新启动为隐藏的后台进程（输出写 `rooms/.server.log`），等锁文件里的 PID 应答 `/api/health` 后退出，命令行窗口随之关闭；后台启动失败或 60 秒未就绪就打印日志、返回 1 让启动脚本停住。后台进程监听后用 `start` 在默认浏览器打开普通标签页；已有服务时只再开一个标签页。页面是否开着按连接判断：`public/app-window.js` 在 `/api/app-mode` 为真时常开 `/api/presence`，连接数归零 5 秒后（容许刷新）检查是否忙（有讨论 running 或在发言、交接 running/reviewing、实验 running），忙就每 30 秒再查，闲了才 `shutdown()`；2 分钟内一直没有页面连上也按同样规则停。`shutdown()` 先把各讨论延迟的写盘落盘。
 
 ## 每次发言的提示组成（`#runTurn`）
 
