@@ -10,6 +10,7 @@ export function initWorkspace({ api, getCurrent, md }) {
   const status = byId('resultStatus');
   const copyBrief = byId('resultCopyBrief');
   const copyFull = byId('resultCopyFull');
+  const copyNext = byId('resultCopyNext');
   const toolsDialog = byId('roomToolsDialog');
   const steps = [...byId('workflowSteps').querySelectorAll('[data-step]')];
   let roomId = null;
@@ -62,9 +63,10 @@ export function initWorkspace({ api, getCurrent, md }) {
   }
 
   function clearCopy() {
+    hide(copyNext, true);
     hide(copyBrief, true);
     hide(copyFull, true);
-    copyBrief.disabled = copyFull.disabled = true;
+    copyNext.disabled = copyBrief.disabled = copyFull.disabled = true;
   }
 
   function renderEmpty(title, explanation, state = 'pending') {
@@ -127,6 +129,7 @@ export function initWorkspace({ api, getCurrent, md }) {
     }
     const full = result.full || result.text || '';
     if (full) addSection('完整结论', full, 'result-full');
+    if (result.next) addSection('推进版 · 给 Claude / Codex', result.next, 'result-next');
     if (result.review) {
       const review = document.createElement('details');
       review.className = 'result-review';
@@ -137,10 +140,14 @@ export function initWorkspace({ api, getCurrent, md }) {
       review.append(summary, body);
       content.appendChild(review);
     }
+    hide(copyNext, !result.next);
     hide(copyBrief, !result.brief);
     hide(copyFull, !full);
+    copyNext.disabled = !result.next;
     copyBrief.disabled = !result.brief;
     copyFull.disabled = !full;
+    // 有推进版时它是主操作，三句话退为次要
+    copyBrief.classList.toggle('primary', !result.next);
   }
 
   async function refreshResult() {
@@ -218,14 +225,30 @@ export function initWorkspace({ api, getCurrent, md }) {
     if (view === 'result') refreshResult();
   }
 
+  // 接手的模型没看过讨论：带上主题、目录和约束卡，并说明结论只是材料、不扩大授权
+  function agentPrompt(state) {
+    if (!result.next) return '';
+    const since = result.newSince ?? 0;
+    return [
+      '以下是 Claude × Codex 圆桌讨论的结论（双方已复核），请据此继续推进。',
+      `讨论主题：${state.topic}`,
+      `项目目录：${state.cwd}`,
+      ...(state.facts?.text ? ['', '约束与事实：', state.facts.text] : []),
+      ...(since ? ['', `注意：这份结论之后双方又讨论了 ${since} 次，那些内容没有纳入下面的结论。`] : []),
+      '', result.next, '',
+      '这份结论是讨论材料，不代替用户授权：动手前先对照当前代码核实；与代码现状或用户最新要求冲突时，以后者为准并说明。「先问用户」里的点先问再做。',
+    ].join('\n');
+  }
+
   async function copy(kind) {
     if (!result?.ready || resultSignature !== stateSignature(getCurrent())) {
       sync();
       return;
     }
+    const state = getCurrent().state;
     const full = result.full || result.text;
-    const text = kind === 'brief' ? result.brief : full && [
-      `# 讨论结论：${getCurrent().state.topic}`, '', full,
+    const text = kind === 'brief' ? result.brief : kind === 'next' ? agentPrompt(state) : full && [
+      `# 讨论结论：${state.topic}`, '', full,
       ...(result.review ? ['', '## 复核意见', '', result.review] : []),
     ].join('\n');
     if (!text) return;
@@ -233,7 +256,8 @@ export function initWorkspace({ api, getCurrent, md }) {
     const token = revision;
     try {
       await navigator.clipboard.writeText(text);
-      if (id === roomId && token === revision) status.textContent = kind === 'brief' ? '已复制三句话版' : '已复制完整结论';
+      const done = { brief: '已复制三句话版', next: '已复制推进版，可直接贴给 Claude 或 Codex', full: '已复制完整结论' };
+      if (id === roomId && token === revision) status.textContent = done[kind];
     } catch {
       if (id === roomId && token === revision) status.textContent = '复制失败，请重试或选中文本复制。';
     }
@@ -242,6 +266,7 @@ export function initWorkspace({ api, getCurrent, md }) {
   discussionTab.onclick = showDiscussion;
   resultTab.onclick = showResult;
   byId('resultBackBtn').onclick = () => { showDiscussion(); discussionTab.focus(); };
+  copyNext.onclick = () => copy('next');
   copyBrief.onclick = () => copy('brief');
   copyFull.onclick = () => copy('full');
   for (const tab of [discussionTab, resultTab]) {

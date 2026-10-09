@@ -58,7 +58,7 @@ test('两版结论经过同一复核定稿，完整流程保留独立提案隔�
   assert.match(finalPrompt, /建议 A/);
   assert.match(finalPrompt, /采用 A/);
   assert.match(finalPrompt, /都应改成 B/);
-  assert.match(finalPrompt, /同步到三句话版和完整版/);
+  assert.match(finalPrompt, /同步到三句话版、完整版和推进版/);
 });
 
 for (const text of ['无异议，没有遗漏', '无异议，无需更正']) {

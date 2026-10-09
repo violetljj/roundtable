@@ -458,6 +458,7 @@ body:has(#handoffBtn:is([data-status="running"], [data-status="reviewing"], [dat
 .result-section > h3 { font-size: 13px; letter-spacing: .08em; color: var(--muted); font-weight: 600; margin: 0 0 12px; }
 .result-brief { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--text); border-radius: 4px var(--r) var(--r) 4px; padding: 18px 22px; margin-bottom: 34px; box-shadow: var(--shadow-sm); }
 .result-brief .result-body { font: 17px/1.9 var(--serif); }
+.result-next { border-top: 1px solid var(--line); margin-top: 32px; padding-top: 22px; }
 .result-review { border-top: 1px solid var(--line); margin-top: 32px; padding-top: 18px; }
 .result-review > summary { cursor: pointer; font-size: 13.5px; color: var(--muted); }
 .result-review > div { margin-top: 12px; }

@@ -128,11 +128,11 @@ test('旧总结没有双版标题时保留全文，且完整 forward 比显示�
 
 test('代码围栏内示例标题不会被拆成实际短版', () => {
   const text = '```markdown\n## 三句话版\n这是示例\n## 完整版\n也是示例\n```\n旧总结。';
-  assert.deepEqual(splitConclusion(text), { brief: '', full: text });
+  assert.deepEqual(splitConclusion(text), { brief: '', full: text, next: '' });
 });
 
 test('没有数据时返回稳定空结果', () => {
-  assert.deepEqual(conclusionFromRoom(null), { ready: false, text: '', brief: '', full: '', messageId: null, review: '' });
+  assert.deepEqual(conclusionFromRoom(null), { ready: false, text: '', brief: '', full: '', next: '', messageId: null, review: '' });
 });
 
 test('审稿与讲课模式提供完整的阶段协议且不假造验证', () => {
@@ -145,4 +145,14 @@ test('审稿与讲课模式提供完整的阶段协议且不假造验证', () =>
   assert.match(EXTRA_MODES.paper.discuss, /不能写成已完成/);
   assert.match(EXTRA_MODES.learn.goal, /先发言方负责讲解/);
   assert.match(EXTRA_MODES.learn.discuss, /沉默当作掌握/);
+});
+
+test('推进版单独拆出，不混进完整版；旧双版结论推进版为空', () => {
+  const text = '## 三句话版\n建议甲。依据是测量。反例出现就改。\n\n## 完整版\n### 依据\n测量。\n\n## 推进版\n**目标**：落地甲。\n**步骤**：\n1. 改 lib/a.js';
+  assert.deepEqual(splitConclusion(text), {
+    brief: '建议甲。依据是测量。反例出现就改。',
+    full: '### 依据\n测量。',
+    next: '**目标**：落地甲。\n**步骤**：\n1. 改 lib/a.js',
+  });
+  assert.equal(conclusionFromRoom(room(summary, accepted)).next, '');
 });

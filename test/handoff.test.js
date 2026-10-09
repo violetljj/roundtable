@@ -274,3 +274,10 @@ test('建立工作区、提交和合并都不执行仓库 hooks', async (t) => {
   await handoff.merge({ confirmed: true, commit: handoff.d.commit });
   assert.equal(fs.existsSync(marker), false);
 });
+
+test('结论有推进版时任务卡方案只取推进版', (t) => {
+  const { handoff, room } = fixture(t);
+  room.d.phase = 'done';
+  room.d.messages.push({ id: 'final-1', kind: 'final', status: 'complete', text: '## 三句话版\n甲。乙。丙。\n## 完整版\n讨论经过。\n## 推进版\n**目标**：落地甲。' });
+  assert.equal(handoff.snapshot().card.plan, '**目标**：落地甲。');
+});
