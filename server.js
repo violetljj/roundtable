@@ -17,6 +17,7 @@ import { Experiment } from './lib/experiment.js';
 import { roomResult, experimentAction, assertDiscussionAvailable } from './lib/discussion-api.js';
 import { createStatusCache } from './lib/status-cache.js';
 import { claimInstance, updateInstance, releaseInstance } from './lib/instance-lock.js';
+import { findAppBrowser, openAppWindow, launchInBackground } from './lib/app-window.js';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const ROOMS_DIR = process.env.ROUNDTABLE_ROOMS_DIR ? path.resolve(process.env.ROUNDTABLE_ROOMS_DIR) : path.join(ROOT, 'rooms');
@@ -24,6 +25,13 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const BASE_PORT = parseInt(process.env.ROUNDTABLE_PORT ?? '4545', 10);
 
 fs.mkdirSync(ROOMS_DIR, { recursive: true });
+
+// --app（启动脚本用）：服务转到后台，讨论室用独立窗口打开，窗口全部关掉即停止；找不到浏览器时退回前台运行
+const APP_BROWSER = process.argv.includes('--app') ? findAppBrowser() : null;
+const APP_PROFILE = path.join(ROOMS_DIR, '.app-window');
+if (APP_BROWSER && !process.argv.includes('--background')) {
+  process.exit(await launchInBackground({ script: fileURLToPath(import.meta.url), roomsDir: ROOMS_DIR, logFile: path.join(ROOMS_DIR, '.server.log') }));
+}
 
 // 同一个讨论记录目录只跑一份服务；已有的话直接打开它（规则见 lib/instance-lock.js）
 let existing;
@@ -36,7 +44,8 @@ try {
 if (existing) {
   const url = `http://127.0.0.1:${existing.port}`;
   console.log(`讨论室已经在运行：${url}，不再重复启动。`);
-  if (process.argv.includes('--open')) await new Promise((resolve) => exec(`start "" "${url}"`, resolve));
+  if (APP_BROWSER) openAppWindow(APP_BROWSER, url, APP_PROFILE);
+  else if (process.argv.includes('--open') || process.argv.includes('--app')) await new Promise((resolve) => exec(`start "" "${url}"`, resolve));
   process.exit(0);
 }
 process.on('exit', () => releaseInstance(ROOMS_DIR));
@@ -182,6 +191,16 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && !(req.headers['content-type'] ?? '').includes('application/json')) return send(res, 415, { error: 'json only' });
+
+    // 应用窗口模式下，页面用一条常开连接表示"窗口还开着"
+    if (req.method === 'GET' && url.pathname === '/api/app-mode') return send(res, 200, { app: !!APP_BROWSER });
+    if (req.method === 'GET' && url.pathname === '/api/presence') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+      res.write(': open\n\n');
+      windowOpened();
+      req.on('close', windowClosed);
+      return;
+    }
 
     // GET /api/health
     if (req.method === 'GET' && url.pathname === '/api/health') {
@@ -380,15 +399,46 @@ server.listen(port, '127.0.0.1', () => {
   updateInstance(ROOMS_DIR, { port });
   console.log(`讨论室已启动：${url}`);
   console.log(claudeExe ? `Claude 命令行：${claudeExe}` : '警告：找不到 Claude 命令行');
-  console.log('关闭这个窗口即可停止服务。');
-  if (process.argv.includes('--open')) exec(`start "" "${url}"`);
+  if (APP_BROWSER) {
+    console.log('关闭讨论室窗口即停止服务。');
+    const browser = openAppWindow(APP_BROWSER, url, APP_PROFILE);
+    // 页面还没连上就没了浏览器（启动失败或马上被关），没有窗口可以关，直接停
+    // （窗口并入已开着的同配置浏览器时进程也会马上退出，所以等页面一会儿）
+    browser.on('exit', () => setTimeout(() => { if (!windowSeen) shutdown(); }, 10000));
+    setTimeout(() => { if (!windowSeen) shutdown(); }, 120000);
+  } else console.log('关闭这个窗口即可停止服务。');
+  if (process.argv.includes('--open') && !APP_BROWSER) exec(`start "" "${url}"`);
   // 提前启动 Codex 后台，打开网页时不用等
   codexServer.start().then(() => getModels()).catch((e) => console.error('Codex 启动失败：', e.message));
   getStatus(); // 后台预热账号，页面不等待命令行查询。
 });
 
+// 按页面连接判断窗口是否还开着：刷新会短暂断开，所以全部断开 5 秒后才停
+let windowSeen = false;
+let windowCount = 0;
+let windowTimer = null;
+function windowOpened() {
+  windowSeen = true;
+  windowCount++;
+  clearTimeout(windowTimer);
+}
+function windowClosed() {
+  windowCount--;
+  if (windowCount > 0) return;
+  windowTimer = setTimeout(() => {
+    if (windowCount > 0) return;
+    console.log('讨论室窗口已全部关闭，停止服务。');
+    shutdown();
+  }, 5000);
+}
+
+let stopping = false;
 async function shutdown() {
+  if (stopping) return;
+  stopping = true;
   server.close();
+  // 延迟写盘的讨论状态先落盘，避免最后几秒的内容丢失
+  for (const room of rooms.values()) try { room.save(true); } catch {}
   await Promise.allSettled([...rooms.values()].map((room) => room.handoff.cancel()));
   await Promise.allSettled([...rooms.values()].map((room) => room.experiment.dispose()));
   codexServer.stop();
